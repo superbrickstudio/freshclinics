@@ -1,5 +1,5 @@
 /**
- * Field mappers: transform HubSpot proxy JSON → Webflow CMS fieldData.
+ * Field mappers: transform HubSpot proxy JSON â Webflow CMS fieldData.
  *
  * Each mapper returns an object whose keys match the Webflow collection
  * field slugs exactly.
@@ -75,7 +75,12 @@ export function mapEvent(hubspotEvent) {
     'hubspot-id': hubspotEvent.hs_object_id,
     title: name,
     blurb: hubspotEvent.description
-      ? hubspotEvent.description.replace(/<[^>]*>/g, '').slice(0, 200)
+      ? hubspotEvent.description
+          .replace(/<[^>]*>/g, '')
+          .replace(/[\r\n]+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 200)
       : null,
     location: buildLocation(hubspotEvent),
     'text-content-description': hubspotEvent.description || null,
@@ -106,7 +111,7 @@ export function mapEvent(hubspotEvent) {
     ),
   };
 
-  // Cover image — only include if we have a URL
+  // Cover image â only include if we have a URL
   const coverImg = resolveCoverImage(hubspotEvent);
   if (coverImg) {
     fieldData['cover-image'] = coverImg;
@@ -122,7 +127,7 @@ export function mapEvent(hubspotEvent) {
     fieldData['webinar-url'] = { url: hubspotEvent.webinar_url };
   }
 
-  // Strip out null values — Webflow doesn't like explicit nulls on some field types
+  // Strip out null values â Webflow doesn't like explicit nulls on some field types
   for (const [key, val] of Object.entries(fieldData)) {
     if (val === null || val === undefined) {
       delete fieldData[key];
