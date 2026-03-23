@@ -1,0 +1,49 @@
+name: Sync HubSpot Events to Webflow CMS
+
+on:
+  # Run twice daily at 6am and 6pm AEST (UTC+10)
+  schedule:
+    - cron: '0 20 * * *'   # 6:00 AM AEST
+    - cron: '0 8 * * *'    # 6:00 PM AEST
+
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no writes to Webflow)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run sync
+        env:
+          WEBFLOW_API_TOKEN: ${{ secrets.WEBFLOW_API_TOKEN }}
+          WEBFLOW_SITE_ID: ${{ secrets.WEBFLOW_SITE_ID }}
+          EVENTS_COLLECTION_ID: ${{ secrets.EVENTS_COLLECTION_ID }}
+          SPEAKERS_COLLECTION_ID: ${{ secrets.SPEAKERS_COLLECTION_ID }}
+          SPONSORS_COLLECTION_ID: ${{ secrets.SPONSORS_COLLECTION_ID }}
+          AGENDAS_COLLECTION_ID: ${{ secrets.AGENDAS_COLLECTION_ID }}
+          HUBSPOT_PROXY_BASE_URL: ${{ secrets.HUBSPOT_PROXY_BASE_URL }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: npm run sync
