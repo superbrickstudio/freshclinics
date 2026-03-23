@@ -56,3 +56,34 @@ export async function fetchSponsors(eventId) {
     return [];
   }
 }
+
+/**
+ * Fetch a single event's full details (event page properties).
+ * This endpoint returns additional fields like agenda_breakdown_to_be_displayed
+ * and recording_file_url that aren't in the list endpoint.
+ */
+export async function fetchEventDetail(eventId) {
+  try {
+    const data = await fetchJson(`${BASE}/events/${eventId}`);
+    return data;
+  } catch (err) {
+    console.warn(`  ⚠ Could not fetch detail for event ${eventId}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Fetch agenda items for a specific event.
+ * Only call this when agenda_breakdown_to_be_displayed is TRUE.
+ */
+export async function fetchAgenda(eventId) {
+  try {
+    const data = await fetchJson(`${BASE}/events/${eventId}/agenda`);
+    // The API may return 'Agenda breakdown not required' as a string
+    if (typeof data === 'string') return [];
+    return Array.isArray(data) ? data : data.agenda || data.sessions || [];
+  } catch (err) {
+    console.warn(`  ⚠ Could not fetch agenda for event ${eventId}: ${err.message}`);
+    return [];
+  }
+}
