@@ -2,7 +2,69 @@
  * Field mappers: transform HubSpot proxy JSON â Webflow CMS fieldData.
  *
  * Each mapper returns an object whose keys match the Webflow collection
- * field slugs exactly.
+ * field slugs exactly. HubSpot field names are taken from the official
+ * "HubSpot Event Platform Properties" spreadsheet.
+ *
+ * HubSpot internal names â Webflow slugs:
+ *
+ * EVENTS:
+ *   event_name             â name, title
+ *   hs_object_id           â hubspot-id
+ *   description            â text-content-description, blurb (truncated)
+ *   start_time             â event-date
+ *   end_time               â event-end-date
+ *   address                â location (composite)
+ *   event_suburb           â event-suburb
+ *   event_state            â event-state
+ *   event_postcode         â event-postcode
+ *   country                â country
+ *   venue_name             â venue-name
+ *   cover_image__file_link_      â cover-image
+ *   cover_image__file_upload_    â cover-image (fallback)
+ *   ticket_price           â ticket-price
+ *   currency               â currency
+ *   type                   â event-type
+ *   event_category         â event-category
+ *   event_tags             â event-tags
+ *   event_ticket_type      â ticket-type
+ *   event_payment_type     â payment-type
+ *   available_capacity     â spots-remaining
+ *   capacity_limit         â capacity-limit
+ *   event_visibility       â members-only (inverted)
+ *   event_location         â on-zoom (derived)
+ *   virtual_event_platform â on-zoom (derived)
+ *   webinar_url            â webinar-url
+ *   event_registration_url â event-link
+ *   recording_file_url     â recording-url
+ *   agenda_breakdown_to_be_displayed â agenda-displayed
+ *
+ * SPEAKERS:
+ *   hs_object_id           â hubspot-id
+ *   event_table_record     â name, name-of-person (full name)
+ *   speaker_first_name     â (used in fallback name)
+ *   speaker_last_name      â (used in fallback name)
+ *   speaker_role__job_title â role
+ *   speaker_bio            â desc
+ *   speaker_profile_image  â image
+ *
+ * SPONSORS:
+ *   hs_object_id           â hubspot-id
+ *   sponsor_name           â name
+ *   sponsor_about_sponsor  â description
+ *   sponsor_logo_image     â logo
+ *   sponsor_website_url    â website
+ *   sponsor_email          â email
+ *   sponsor_instagram_url  â instagram-url
+ *
+ * AGENDAS:
+ *   hs_id                  â hubspot-id
+ *   session_title          â name, title
+ *   session_description    â desc
+ *   session_start_time     â time
+ *   session_end_time       â end-time
+ *   presenter_name         â presenter-name
+ *   sort_order             â sort-order
+ *   event_record_id        â event-record-id
  */
 
 // ---------- Helpers ----------
@@ -26,6 +88,8 @@ function resolveCoverImage(event) {
   }
   if (event.cover_image__file_upload_) {
     // HubSpot file manager public URL pattern
+    // NOTE: Confirm this URL pattern with the client â the file ID may need
+    // a different base URL depending on their HubSpot portal configuration.
     return {
       url: `https://www.freshclinics.com/hubfs/${event.cover_image__file_upload_}`,
     };
@@ -64,6 +128,15 @@ function buildDuration(event) {
   return `${fmt(event.start_time)} - ${fmt(event.end_time)}`;
 }
 
+function stripNulls(obj) {
+  for (const [key, val] of Object.entries(obj)) {
+    if (val === null || val === undefined) {
+      delete obj[key];
+    }
+  }
+  return obj;
+}
+
 // ---------- Event mapper ----------
 
 export function mapEvent(hubspotEvent) {
@@ -72,7 +145,7 @@ export function mapEvent(hubspotEvent) {
   const fieldData = {
     name,
     slug: slugify(name),
-    'hubspot-id': hubspotEvent.hs_object_id,
+    'hubspot-id': String(hubspotEvent.hs_object_id),
     title: name,
     blurb: hubspotEvent.description
       ? hubspotEvent.description
@@ -89,29 +162,39 @@ export function mapEvent(hubspotEvent) {
     duration: buildDuration(hubspotEvent),
     'event-state': hubspotEvent.event_state || null,
     'event-suburb': hubspotEvent.event_suburb || null,
+    'event-postcode': hubspotEvent.event_postcode
+      ? String(hubspotEvent.event_postcode)
+      : null,
     country: hubspotEvent.country || null,
     'venue-name': hubspotEvent.venue_name || null,
-    'ticket-price': hubspotEvent.ticket_price || null,
+    'ticket-price': hubspotEvent.ticket_price
+      ? String(hubspotEvent.ticket_price)
+      : null,
     currency: hubspotEvent.currency || null,
     'event-type': hubspotEvent.type || null,
     'event-category': hubspotEvent.event_category || null,
     'event-tags': hubspotEvent.event_tags || null,
     'ticket-type': hubspotEvent.event_ticket_type || null,
+    'payment-type': hubspotEvent.event_payment_type || null,
     'spots-remaining': hubspotEvent.available_capacity
       ? parseInt(hubspotEvent.available_capacity, 10)
       : null,
     'capacity-limit': hubspotEvent.capacity_limit
       ? parseInt(hubspotEvent.capacity_limit, 10)
       : null,
-    'members-only': hubspotEvent.event_visibility?.toLowerCase().includes('non-members')
+    'members-only': hubspotEvent.event_visibility
+      ?.toLowerCase()
+      .includes('non-members')
       ? false
       : true,
     'on-zoom': !!(
       hubspotEvent.virtual_event_platform || hubspotEvent.webinar_url
     ),
+    'agenda-displayed': hubspotEvent.agenda_breakdown_to_be_displayed === 'TRUE' ||
+      hubspotEvent.agenda_breakdown_to_be_displayed === true,
   };
 
-  // Cover image â only include if we have a URL
+  // Cover image
   const coverImg = resolveCoverImage(hubspotEvent);
   if (coverImg) {
     fieldData['cover-image'] = coverImg;
@@ -127,91 +210,115 @@ export function mapEvent(hubspotEvent) {
     fieldData['webinar-url'] = { url: hubspotEvent.webinar_url };
   }
 
-  // Strip out null values â Webflow doesn't like explicit nulls on some field types
-  for (const [key, val] of Object.entries(fieldData)) {
-    if (val === null || val === undefined) {
-      delete fieldData[key];
-    }
+  // Recording URL (event page endpoint only)
+  if (hubspotEvent.recording_file_url) {
+    fieldData['recording-url'] = { url: hubspotEvent.recording_file_url };
   }
 
-  return fieldData;
+  return stripNulls(fieldData);
 }
 
 // ---------- Speaker mapper ----------
 
 export function mapSpeaker(hubspotSpeaker) {
+  // Use event_table_record (full name) first, then construct from first/last
   const displayName =
+    hubspotSpeaker.event_table_record ||
+    [hubspotSpeaker.speaker_first_name, hubspotSpeaker.speaker_last_name]
+      .filter(Boolean)
+      .join(' ') ||
     hubspotSpeaker.name ||
-    hubspotSpeaker.speaker_name ||
-    hubspotSpeaker.full_name ||
     'Unknown Speaker';
 
   const fieldData = {
     name: displayName,
     slug: slugify(displayName),
-    'hubspot-id': hubspotSpeaker.hs_object_id || hubspotSpeaker.id || null,
+    'hubspot-id': String(hubspotSpeaker.hs_object_id || hubspotSpeaker.id || ''),
     'name-of-person': displayName,
-    role: hubspotSpeaker.role || hubspotSpeaker.title || null,
-    company: hubspotSpeaker.company || hubspotSpeaker.organization || null,
+    role: hubspotSpeaker.speaker_role__job_title || null,
+    company: hubspotSpeaker.company || null,
   };
 
-  if (hubspotSpeaker.bio || hubspotSpeaker.description) {
-    fieldData.desc = hubspotSpeaker.bio || hubspotSpeaker.description;
+  // Bio
+  if (hubspotSpeaker.speaker_bio) {
+    fieldData.desc = hubspotSpeaker.speaker_bio;
   }
 
-  if (hubspotSpeaker.image || hubspotSpeaker.headshot || hubspotSpeaker.photo) {
-    fieldData.image = {
-      url: hubspotSpeaker.image || hubspotSpeaker.headshot || hubspotSpeaker.photo,
-    };
+  // Profile image
+  if (hubspotSpeaker.speaker_profile_image) {
+    fieldData.image = { url: hubspotSpeaker.speaker_profile_image };
   }
 
-  // Strip nulls
-  for (const [key, val] of Object.entries(fieldData)) {
-    if (val === null || val === undefined) {
-      delete fieldData[key];
-    }
-  }
-
-  return fieldData;
+  return stripNulls(fieldData);
 }
 
 // ---------- Sponsor mapper ----------
 
 export function mapSponsor(hubspotSponsor) {
   const displayName =
-    hubspotSponsor.name ||
     hubspotSponsor.sponsor_name ||
-    hubspotSponsor.company_name ||
+    hubspotSponsor.name ||
     'Unknown Sponsor';
 
   const fieldData = {
     name: displayName,
     slug: slugify(displayName),
-    'hubspot-id': hubspotSponsor.hs_object_id || hubspotSponsor.id || null,
+    'hubspot-id': String(hubspotSponsor.hs_object_id || hubspotSponsor.id || ''),
   };
 
-  if (hubspotSponsor.description || hubspotSponsor.bio) {
-    fieldData.description = hubspotSponsor.description || hubspotSponsor.bio;
+  // About / description
+  if (hubspotSponsor.sponsor_about_sponsor) {
+    fieldData.description = hubspotSponsor.sponsor_about_sponsor;
   }
 
-  if (hubspotSponsor.logo || hubspotSponsor.image) {
-    fieldData.logo = {
-      url: hubspotSponsor.logo || hubspotSponsor.image,
-    };
+  // Logo image
+  if (hubspotSponsor.sponsor_logo_image) {
+    fieldData.logo = { url: hubspotSponsor.sponsor_logo_image };
   }
 
-  if (hubspotSponsor.website || hubspotSponsor.url) {
-    fieldData.website = {
-      url: hubspotSponsor.website || hubspotSponsor.url,
-    };
+  // Website
+  if (hubspotSponsor.sponsor_website_url) {
+    fieldData.website = { url: hubspotSponsor.sponsor_website_url };
   }
 
-  // Strip nulls
-  for (const [key, val] of Object.entries(fieldData)) {
-    if (val === null || val === undefined) {
-      delete fieldData[key];
-    }
+  // Email
+  if (hubspotSponsor.sponsor_email) {
+    fieldData.email = hubspotSponsor.sponsor_email;
   }
 
-  return fieldData;
+  // Instagram
+  if (hubspotSponsor.sponsor_instagram_url) {
+    fieldData['instagram-url'] = { url: hubspotSponsor.sponsor_instagram_url };
+  }
+
+  return stripNulls(fieldData);
+}
+
+// ---------- Agenda mapper ----------
+
+export function mapAgenda(hubspotAgenda) {
+  const title = hubspotAgenda.session_title || 'Untitled Session';
+
+  const fieldData = {
+    name: title,
+    slug: slugify(title),
+    'hubspot-id': String(hubspotAgenda.hs_id || hubspotAgenda.id || ''),
+    title,
+    time: hubspotAgenda.session_start_time || null,
+    'end-time': hubspotAgenda.session_end_time || null,
+    'presenter-name': hubspotAgenda.presenter_name || null,
+    'sort-order': hubspotAgenda.sort_order != null
+      ? parseInt(hubspotAgenda.sort_order, 10)
+      : null,
+    'event-record-id': hubspotAgenda.event_record_id
+      ? String(hubspotAgenda.event_record_id)
+      : null,
+  };
+
+  // Session description
+  if (hubspotAgenda.session_description) {
+    fieldData.desc = hubspotAgenda.session_description;
+  }
+
+  return stripNulls(fieldData);
 }
