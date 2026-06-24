@@ -202,17 +202,17 @@ export function mapEvent(hubspotEvent) {
 
   // Registration / event link
   if (hubspotEvent.event_registration_url) {
-    fieldData['event-link'] = { url: hubspotEvent.event_registration_url };
+    fieldData['event-link'] = hubspotEvent.event_registration_url;
   }
 
   // Webinar URL
   if (hubspotEvent.webinar_url) {
-    fieldData['webinar-url'] = { url: hubspotEvent.webinar_url };
+    fieldData['webinar-url'] = hubspotEvent.webinar_url;
   }
 
   // Recording URL (event page endpoint only)
   if (hubspotEvent.recording_file_url) {
-    fieldData['recording-url'] = { url: hubspotEvent.recording_file_url };
+    fieldData['recording-url'] = hubspotEvent.recording_file_url;
   }
 
   return stripNulls(fieldData);
@@ -221,14 +221,29 @@ export function mapEvent(hubspotEvent) {
 // ---------- Speaker mapper ----------
 
 export function mapSpeaker(hubspotSpeaker) {
-  // Use event_table_record (full name) first, then construct from first/last
-  const displayName =
-    hubspotSpeaker.event_table_record ||
-    [hubspotSpeaker.speaker_first_name, hubspotSpeaker.speaker_last_name]
-      .filter(Boolean)
-      .join(' ') ||
+  // Prefer the structured first/last name fields. The proxy's
+  // `event_table_record` is a composite key like
+  // "57268958361::Speaker::Megan Reid", NOT a clean name — so only fall
+  // back to it after stripping the "eventId::Speaker::" prefix.
+  const fromParts = [
+    hubspotSpeaker.speaker_first_name,
+    hubspotSpeaker.speaker_last_name,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
+  const fromRecord = (hubspotSpeaker.event_table_record || '')
+    .split('::')
+    .pop()
+    .trim();
+
+  const displayName = (
+    fromParts ||
+    fromRecord ||
     hubspotSpeaker.name ||
-    'Unknown Speaker';
+    'Unknown Speaker'
+  ).replace(/\s+/g, ' ').trim();
 
   const fieldData = {
     name: displayName,
@@ -278,7 +293,7 @@ export function mapSponsor(hubspotSponsor) {
 
   // Website
   if (hubspotSponsor.sponsor_website_url) {
-    fieldData.website = { url: hubspotSponsor.sponsor_website_url };
+    fieldData.website = hubspotSponsor.sponsor_website_url;
   }
 
   // Email
@@ -288,7 +303,7 @@ export function mapSponsor(hubspotSponsor) {
 
   // Instagram
   if (hubspotSponsor.sponsor_instagram_url) {
-    fieldData['instagram-url'] = { url: hubspotSponsor.sponsor_instagram_url };
+    fieldData['instagram-url'] = hubspotSponsor.sponsor_instagram_url;
   }
 
   return stripNulls(fieldData);
