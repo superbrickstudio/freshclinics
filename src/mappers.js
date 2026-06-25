@@ -142,6 +142,26 @@ function stripNulls(obj) {
   return obj;
 }
 
+/**
+ * Build a short blurb. Prefers the dedicated intro content, falls back to the
+ * full description. Strips HTML, collapses whitespace, and trims to a word
+ * boundary (~200 chars) so it never ends mid-word.
+ */
+function buildBlurb(event) {
+  const source = event.short_description__intro_content || event.description || '';
+  const text = source
+    .replace(/<[^>]*>/g, ' ') // tags -> space so sentences don't run together
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return null;
+  if (text.length <= 200) return text;
+  const cut = text.slice(0, 200);
+  const lastSpace = cut.lastIndexOf(' ');
+  const trimmed = lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+  return trimmed.replace(/[.,;:!?\-\s]+$/, '') + '\u2026';
+}
+
 // ---------- Event mapper ----------
 
 export function mapEvent(hubspotEvent) {
@@ -152,14 +172,7 @@ export function mapEvent(hubspotEvent) {
     slug: slugify(name),
     'hubspot-id': String(hubspotEvent.hs_object_id),
     title: name,
-    blurb: hubspotEvent.description
-      ? hubspotEvent.description
-          .replace(/<[^>]*>/g, '')
-          .replace(/[\r\n]+/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 200)
-      : null,
+    blurb: buildBlurb(hubspotEvent),
     location: buildLocation(hubspotEvent),
     'text-content-description': hubspotEvent.description || null,
     'event-date': hubspotEvent.start_time || null,
