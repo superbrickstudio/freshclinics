@@ -49,14 +49,39 @@ function sleep(ms) {
  * Locale variants share an item id, so de-duplicate before deleting.
  */
 export async function deleteAllItems(collectionId) {
-  const items = await getAllItems(collectionId);
-  const ids = [...new Set(items.map((i) => i.id).filter(Boolean))];
+  // Gather ids from BOTH staged and live lists — a previously-deleted staged
+  // item can leave a published (live) copy whose slug stays reserved.
+  const staged = await getAllItems(collectionId);
+  let live = [];
+  try {
+    live = await getAllItems(collectionId, { live: true });
+  } catch (err) {
+    // ignore — collection may have no published items
+  }
+  const ids = [
+    ...new Set([...staged, ...live].map((i) => i.id).filter(Boolean)),
+  ];
+
   for (let i = 0; i < ids.length; i += 100) {
-    const batch = ids.slice(i, i + 100);
-    await webflowRequest('DELETE', `/collections/${collectionId}/items`, {
-      items: batch.map((id) => ({ id })),
-    });
-    await sleep(300);
+    const batch = ids.slice(i, i + 100).map((id) => ({ id }));
+    // 1) Unpublish the live versions so their slugs are released.
+    try {
+      await webflowRequest('DELETE', `/collections/${collectionId}/items/live`, {
+        items: batch,
+      });
+      await sleep(300);
+    } catch (err) {
+      console.warn(`     \u26a0 live unpublish: ${err.message}`);
+    }
+    // 2) Delete the staged versions entirely.
+    try {
+      await webflowRequest('DELETE', `/collections/${collectionId}/items`, {
+        items: batch,
+      });
+      await sleep(300);
+    } catch (err) {
+      console.warn(`     \u26a0 staged delete: ${err.message}`);
+    }
   }
   return ids.length;
 }
@@ -65,15 +90,18 @@ export async function deleteAllItems(collectionId) {
  * Fetch ALL items from a collection (handles pagination).
  * Returns a flat array of items.
  */
-export async function getAllItems(collectionId) {
+export async function getAllItems(collectionId, { live = false } = {}) {
   const items = [];
   let offset = 0;
   const limit = 100;
+  const base = live
+    ? `/collections/${collectionId}/items/live`
+    : `/collections/${collectionId}/items`;
 
   while (true) {
     const data = await webflowRequest(
       'GET',
-      `/collections/${collectionId}/items?limit=${limit}&offset=${offset}`
+      `${base}?limit=${limit}&offset=${offset}`
     );
     items.push(...(data.items || []));
     if (!data.items || data.items.length < limit) break;
