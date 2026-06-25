@@ -29,6 +29,7 @@ import {
   updateItem,
   publishItems,
   buildHubSpotIdMap,
+  deleteAllItems,
 } from './webflow.js';
 import { mapEvent, mapSpeaker, mapSponsor, mapAgenda } from './mappers.js';
 
@@ -144,6 +145,20 @@ async function main() {
   console.log(`   Mode: ${config.dryRun ? 'DRY RUN' : 'LIVE'}`);
   console.log(`   Proxy: ${config.hubspot.proxyBaseUrl}`);
   console.log('');
+
+  // One-time rebuild: wipe every collection so items are recreated cleanly
+  // (e.g. across all locales). Order doesn't matter here — the sync below
+  // recreates children (speakers/sponsors) before events that reference them.
+  if (config.reset && !config.dryRun) {
+    console.log('🧨 RESET enabled — deleting ALL items in every collection...');
+    for (const [label, collectionId] of Object.entries(
+      config.webflow.collections
+    )) {
+      const removed = await deleteAllItems(collectionId);
+      console.log(`   🗑  ${label}: deleted ${removed} item(s)`);
+    }
+    console.log('   Reset complete — rebuilding from scratch.\n');
+  }
 
   // ──────────────────────────────────────────────
   // 1. Fetch all published events from HubSpot

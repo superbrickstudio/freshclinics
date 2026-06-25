@@ -43,6 +43,23 @@ function sleep(ms) {
 // ---------- Collection items ----------
 
 /**
+ * Delete EVERY item in a collection (used by reset/rebuild).
+ * Locale variants share an item id, so de-duplicate before deleting.
+ */
+export async function deleteAllItems(collectionId) {
+  const items = await getAllItems(collectionId);
+  const ids = [...new Set(items.map((i) => i.id).filter(Boolean))];
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
+    await webflowRequest('DELETE', `/collections/${collectionId}/items`, {
+      items: batch.map((id) => ({ id })),
+    });
+    await sleep(300);
+  }
+  return ids.length;
+}
+
+/**
  * Fetch ALL items from a collection (handles pagination).
  * Returns a flat array of items.
  */

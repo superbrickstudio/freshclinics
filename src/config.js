@@ -29,4 +29,7 @@ export const config = {
     proxyBaseUrl: process.env.HUBSPOT_PROXY_BASE_URL || 'https://webflow-hubdb-proxy.vercel.app/api',
   },
   dryRun: process.env.DRY_RUN === 'true',
+  // One-time rebuild: when true, ALL items in every collection are deleted
+  // before syncing, so they get recreated cleanly (e.g. across all locales).
+  reset: process.env.RESET === 'true',
 };
