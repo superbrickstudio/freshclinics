@@ -17,6 +17,14 @@ on:
         options:
           - 'false'
           - 'true'
+      reset:
+        description: 'Reset (delete ALL items, then rebuild)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   sync:
@@ -46,4 +54,5 @@ jobs:
           AGENDAS_COLLECTION_ID: ${{ secrets.AGENDAS_COLLECTION_ID }}
           HUBSPOT_PROXY_BASE_URL: ${{ secrets.HUBSPOT_PROXY_BASE_URL }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          RESET: ${{ github.event.inputs.reset || 'false' }}
         run: npm run sync
