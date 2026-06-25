@@ -33,7 +33,9 @@ async function webflowRequest(method, path, body = null) {
     const text = await res.text();
     throw new Error(`Webflow API ${res.status}: ${text}`);
   }
-  return res.json();
+  // Some endpoints (e.g. bulk delete) return 204 No Content with an empty body.
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
 
 function sleep(ms) {
