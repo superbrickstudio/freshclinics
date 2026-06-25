@@ -69,10 +69,23 @@ export async function getAllItems(collectionId) {
  * Create a new CMS item (as draft).
  */
 export async function createItem(collectionId, fieldData) {
-  return webflowRequest('POST', `/collections/${collectionId}/items`, {
-    fieldData,
-    isDraft: false,
-  });
+  const localeIds = config.webflow.cmsLocaleIds || [];
+  // When more than one locale is configured, create the item in ALL of them
+  // at once (bulk shape: fieldData array + cmsLocaleIds). This is the only way
+  // to get secondary-locale (e.g. AU) variants — the API will not add them to
+  // an item that was created in the primary locale only.
+  const body =
+    localeIds.length > 1
+      ? { cmsLocaleIds: localeIds, fieldData: [fieldData], isDraft: false }
+      : { fieldData, isDraft: false };
+  const data = await webflowRequest(
+    'POST',
+    `/collections/${collectionId}/items`,
+    body
+  );
+  // Multi-locale create returns { items: [...] } (same id across locales);
+  // single-locale create returns the item directly.
+  return Array.isArray(data?.items) ? data.items[0] : data;
 }
 
 /**

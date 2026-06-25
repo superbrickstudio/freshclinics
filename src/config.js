@@ -7,6 +7,17 @@ export const config = {
   webflow: {
     apiToken: process.env.WEBFLOW_API_TOKEN,
     siteId: process.env.WEBFLOW_SITE_ID || '68e725899c75627784514073',
+    // CMS locale IDs to create items in. Items must be created with ALL locale
+    // IDs up front, otherwise they only exist in the primary locale (the API
+    // does not back-fill secondary locales the way the Designer does).
+    // Order: primary first, then secondaries. US (primary), AU (secondary).
+    cmsLocaleIds: (
+      process.env.CMS_LOCALE_IDS ||
+      '69378d6ff1c1ced8fb14e11d,6992c7be788739ecba1341da'
+    )
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
     collections: {
       events: process.env.EVENTS_COLLECTION_ID || '6948c04079dba6a26e10b9b7',
       speakers: process.env.SPEAKERS_COLLECTION_ID || '6948c082e6e5e80d355f771b',
