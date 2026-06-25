@@ -175,9 +175,11 @@ async function main() {
 
     // Fetch full event detail (has extra fields like recording_file_url, agenda toggle)
     const detail = await fetchEventDetail(eventId);
-    if (detail) {
-      // Merge detail into list event (detail has more fields)
-      eventDetailMap.set(eventId, { ...event, ...detail });
+    // The detail endpoint returns { updatedAt, event }, so unwrap .event
+    // before merging — otherwise its richer fields get buried and ignored.
+    const detailEvent = detail && detail.event ? detail.event : detail;
+    if (detailEvent) {
+      eventDetailMap.set(eventId, { ...event, ...detailEvent });
     } else {
       eventDetailMap.set(eventId, event);
     }
@@ -205,9 +207,9 @@ async function main() {
     );
 
     // Agenda — only fetch if the event says to display it
+    const agendaFlag = mergedEvent.agenda_breakdown_to_be_displayed;
     const showAgenda =
-      mergedEvent.agenda_breakdown_to_be_displayed === 'TRUE' ||
-      mergedEvent.agenda_breakdown_to_be_displayed === true;
+      agendaFlag === true || String(agendaFlag).toLowerCase() === 'true';
 
     if (showAgenda) {
       const agendaItems = await fetchAgenda(eventId);

@@ -69,6 +69,11 @@
 
 // ---------- Helpers ----------
 
+/** HubSpot booleans come back as the lowercase strings 'true' / 'false'. */
+function isTrue(v) {
+  return v === true || String(v).toLowerCase() === 'true';
+}
+
 function slugify(text) {
   return (text || '')
     .toLowerCase()
@@ -171,7 +176,7 @@ export function mapEvent(hubspotEvent) {
       ? String(hubspotEvent.ticket_price)
       : null,
     currency: hubspotEvent.currency || null,
-    'event-type': hubspotEvent.type || null,
+    'event-type': hubspotEvent.event_type_ || hubspotEvent.type || null,
     'event-category': hubspotEvent.event_category || null,
     'event-tags': hubspotEvent.event_tags || null,
     'ticket-type': hubspotEvent.event_ticket_type || null,
@@ -188,10 +193,14 @@ export function mapEvent(hubspotEvent) {
       ? false
       : true,
     'on-zoom': !!(
-      hubspotEvent.virtual_event_platform || hubspotEvent.webinar_url
+      hubspotEvent.virtual_event_platform ||
+      hubspotEvent.webinar_url ||
+      hubspotEvent.meeting_url
     ),
-    'agenda-displayed': hubspotEvent.agenda_breakdown_to_be_displayed === 'TRUE' ||
-      hubspotEvent.agenda_breakdown_to_be_displayed === true,
+    'agenda-displayed': isTrue(hubspotEvent.agenda_breakdown_to_be_displayed),
+    featured: isTrue(hubspotEvent.featured_event),
+    'event-series': hubspotEvent.event_series || null,
+    'intro-content': hubspotEvent.short_description__intro_content || null,
   };
 
   // Cover image
@@ -205,9 +214,10 @@ export function mapEvent(hubspotEvent) {
     fieldData['event-link'] = hubspotEvent.event_registration_url;
   }
 
-  // Webinar URL
-  if (hubspotEvent.webinar_url) {
-    fieldData['webinar-url'] = hubspotEvent.webinar_url;
+  // Webinar / virtual meeting URL (meeting_url is the newer field)
+  const meetingLink = hubspotEvent.webinar_url || hubspotEvent.meeting_url;
+  if (meetingLink) {
+    fieldData['webinar-url'] = meetingLink;
   }
 
   // Recording URL (event page endpoint only)
@@ -251,7 +261,11 @@ export function mapSpeaker(hubspotSpeaker) {
     'hubspot-id': String(hubspotSpeaker.hs_object_id || hubspotSpeaker.id || ''),
     'name-of-person': displayName,
     role: hubspotSpeaker.speaker_role__job_title || null,
-    company: hubspotSpeaker.company || null,
+    company:
+      hubspotSpeaker.speaker_company_name ||
+      hubspotSpeaker.company_name ||
+      hubspotSpeaker.company ||
+      null,
   };
 
   // Bio
@@ -286,9 +300,11 @@ export function mapSponsor(hubspotSponsor) {
     fieldData.description = hubspotSponsor.sponsor_about_sponsor;
   }
 
-  // Logo image
-  if (hubspotSponsor.sponsor_logo_image) {
-    fieldData.logo = { url: hubspotSponsor.sponsor_logo_image };
+  // Logo image (the *_file_link variant is the public URL)
+  const sponsorLogo =
+    hubspotSponsor.sponsor_logo_image_file_link || hubspotSponsor.sponsor_logo_image;
+  if (sponsorLogo) {
+    fieldData.logo = { url: sponsorLogo };
   }
 
   // Website
@@ -301,9 +317,10 @@ export function mapSponsor(hubspotSponsor) {
     fieldData.email = hubspotSponsor.sponsor_email;
   }
 
-  // Instagram
-  if (hubspotSponsor.sponsor_instagram_url) {
-    fieldData['instagram-url'] = hubspotSponsor.sponsor_instagram_url;
+  // Instagram (renamed from sponsor_instagram_url to instagram_profile)
+  const sponsorIg = hubspotSponsor.instagram_profile || hubspotSponsor.sponsor_instagram_url;
+  if (sponsorIg) {
+    fieldData['instagram-url'] = sponsorIg;
   }
 
   return stripNulls(fieldData);
