@@ -117,22 +117,24 @@ export async function getAllItems(collectionId, { live = false } = {}) {
  */
 export async function createItem(collectionId, fieldData) {
   const localeIds = config.webflow.cmsLocaleIds || [];
+  let data;
   if (localeIds.length > 1) {
-    // Create the item across ALL locales in one shot via the /items/bulk
-    // endpoint. fieldData is an OBJECT here and cmsLocaleIds lists every locale
-    // — without cmsLocaleIds the item is created in the primary locale only.
-    return webflowRequest('POST', `/collections/${collectionId}/items/bulk`, {
+    // Bulk endpoint creates the item across ALL locales. fieldData is an object.
+    data = await webflowRequest('POST', `/collections/${collectionId}/items/bulk`, {
       fieldData,
       cmsLocaleIds: localeIds,
       isArchived: false,
       isDraft: false,
     });
+  } else {
+    data = await webflowRequest('POST', `/collections/${collectionId}/items`, {
+      fieldData,
+      isDraft: false,
+    });
   }
-  // Single-locale (primary only) create.
-  return webflowRequest('POST', `/collections/${collectionId}/items`, {
-    fieldData,
-    isDraft: false,
-  });
+  // Normalise the id: bulk responses can nest it under items[].
+  const id = data?.id || data?.items?.[0]?.id || null;
+  return { ...data, id };
 }
 
 /**
@@ -150,10 +152,18 @@ export async function updateItem(collectionId, itemId, fieldData) {
  * Publish an array of item IDs in a collection.
  */
 export async function publishItems(collectionId, itemIds) {
-  if (!itemIds.length) return;
+  // Accept ids or item objects; reduce to unique non-empty id strings.
+  const ids = [
+    ...new Set(
+      (itemIds || [])
+        .map((x) => (typeof x === 'string' ? x : x?.id))
+        .filter(Boolean)
+    ),
+  ];
+  if (!ids.length) return;
   // Webflow allows max 100 items per publish call
-  for (let i = 0; i < itemIds.length; i += 100) {
-    const batch = itemIds.slice(i, i + 100);
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
     await webflowRequest('POST', `/collections/${collectionId}/items/publish`, {
       itemIds: batch,
     });
