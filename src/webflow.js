@@ -141,6 +141,20 @@ export async function createItem(collectionId, fieldData) {
  * Update an existing CMS item.
  */
 export async function updateItem(collectionId, itemId, fieldData) {
+  const localeIds = config.webflow.cmsLocaleIds || [];
+  if (localeIds.length > 1) {
+    // Update the item in EVERY locale (same content) via the bulk endpoint.
+    // Without a cmsLocaleId per entry, only the primary locale is updated,
+    // so the AU copy would drift when HubSpot content changes.
+    return webflowRequest('PATCH', `/collections/${collectionId}/items`, {
+      items: localeIds.map((cmsLocaleId) => ({
+        id: itemId,
+        cmsLocaleId,
+        fieldData,
+      })),
+    });
+  }
+  // Single-locale (primary only) update.
   return webflowRequest(
     'PATCH',
     `/collections/${collectionId}/items/${itemId}`,
