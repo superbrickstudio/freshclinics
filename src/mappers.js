@@ -162,6 +162,45 @@ function buildBlurb(event) {
   return trimmed.replace(/[.,;:!?\-\s]+$/, '') + '\u2026';
 }
 
+/**
+ * Escape bare HTML-significant chars in plain text.
+ */
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Normalise a rich-text value for Webflow.
+ * - If the source is already HTML (has block tags), keep it.
+ * - If it's plain text (as HubSpot often sends), split on line breaks and wrap
+ *   each line in <p> so Webflow renders real paragraphs instead of one blob.
+ * - Strip inline style="" attributes so the Designer's styling isn't overridden.
+ * - Drop empty paragraphs.
+ */
+function toRichHtml(raw) {
+  if (!raw) return null;
+  const hasBlockHtml = /<(p|ul|ol|li|h[1-6]|div|br|blockquote|hr)\b/i.test(raw);
+  let html;
+  if (hasBlockHtml) {
+    html = raw;
+  } else {
+    html = raw
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => `<p>${escapeHtml(line)}</p>`)
+      .join('');
+  }
+  html = html
+    .replace(/\sstyle="[^"]*"/gi, '')
+    .replace(/<p>\s*<\/p>/gi, '')
+    .trim();
+  return html || null;
+}
+
 // ---------- Event mapper ----------
 
 export function mapEvent(hubspotEvent) {
@@ -174,7 +213,7 @@ export function mapEvent(hubspotEvent) {
     title: name,
     blurb: buildBlurb(hubspotEvent),
     location: buildLocation(hubspotEvent),
-    'text-content-description': hubspotEvent.description || null,
+    'text-content-description': toRichHtml(hubspotEvent.description),
     'event-date': hubspotEvent.start_time || null,
     'event-end-date': hubspotEvent.end_time || null,
     duration: buildDuration(hubspotEvent),
@@ -213,7 +252,7 @@ export function mapEvent(hubspotEvent) {
     'agenda-displayed': isTrue(hubspotEvent.agenda_breakdown_to_be_displayed),
     featured: isTrue(hubspotEvent.featured_event),
     'event-series': hubspotEvent.event_series || null,
-    'intro-content': hubspotEvent.short_description__intro_content || null,
+    'intro-content': toRichHtml(hubspotEvent.short_description__intro_content),
   };
 
   // Cover image
@@ -282,8 +321,9 @@ export function mapSpeaker(hubspotSpeaker) {
   };
 
   // Bio
-  if (hubspotSpeaker.speaker_bio) {
-    fieldData.desc = hubspotSpeaker.speaker_bio;
+  const speakerDesc = toRichHtml(hubspotSpeaker.speaker_bio);
+  if (speakerDesc) {
+    fieldData.desc = speakerDesc;
   }
 
   // Profile image
@@ -309,8 +349,9 @@ export function mapSponsor(hubspotSponsor) {
   };
 
   // About / description
-  if (hubspotSponsor.sponsor_about_sponsor) {
-    fieldData.description = hubspotSponsor.sponsor_about_sponsor;
+  const sponsorDesc = toRichHtml(hubspotSponsor.sponsor_about_sponsor);
+  if (sponsorDesc) {
+    fieldData.description = sponsorDesc;
   }
 
   // Logo image (the *_file_link variant is the public URL)
@@ -361,8 +402,9 @@ export function mapAgenda(hubspotAgenda) {
   };
 
   // Session description
-  if (hubspotAgenda.session_description) {
-    fieldData.desc = hubspotAgenda.session_description;
+  const agendaDesc = toRichHtml(hubspotAgenda.session_description);
+  if (agendaDesc) {
+    fieldData.desc = agendaDesc;
   }
 
   return stripNulls(fieldData);
