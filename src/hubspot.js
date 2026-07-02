@@ -23,12 +23,22 @@ export async function fetchEvents() {
   const data = await fetchJson(`${BASE}/events`);
   const events = data.events || [];
 
-  // Safety filter — only sync published public events
-  return events.filter(
-    (e) =>
-      e.event_status === 'Published' &&
-      e.event_visibility?.toLowerCase().includes('public')
-  );
+  return events.filter((e) => {
+    // Public events only.
+    if (!e.event_visibility?.toLowerCase().includes('public')) return false;
+
+    // Upcoming/published events always sync.
+    if (e.event_status === 'Published') return true;
+
+    // Past events sync only if approved for on-demand viewing (so their
+    // recording can appear). HubSpot returns booleans as strings — only an
+    // explicit "false" counts as false; anything else (incl. null/unset) is true.
+    if (e.event_status === 'Expired (Past Event)') {
+      return String(e.on_demand_approved).toLowerCase() !== 'false';
+    }
+
+    return false;
+  });
 }
 
 /**
