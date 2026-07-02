@@ -187,12 +187,33 @@ function toRichHtml(raw) {
   if (hasBlockHtml) {
     html = raw;
   } else {
-    html = raw
+    // Plain text. Group consecutive bullet lines (-, *, •) into a real <ul>,
+    // everything else becomes a <p>.
+    const lines = raw
       .split(/\n+/)
       .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => `<p>${escapeHtml(line)}</p>`)
-      .join('');
+      .filter(Boolean);
+    const bulletRe = /^[-*•]\s+/;
+    const parts = [];
+    let bullets = [];
+    const flush = () => {
+      if (bullets.length) {
+        parts.push(
+          '<ul>' + bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join('') + '</ul>'
+        );
+        bullets = [];
+      }
+    };
+    for (const line of lines) {
+      if (bulletRe.test(line)) {
+        bullets.push(line.replace(bulletRe, ''));
+      } else {
+        flush();
+        parts.push(`<p>${escapeHtml(line)}</p>`);
+      }
+    }
+    flush();
+    html = parts.join('');
   }
   html = html
     .replace(/\sstyle="[^"]*"/gi, '')
