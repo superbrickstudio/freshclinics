@@ -186,6 +186,35 @@ export async function publishItems(collectionId, itemIds) {
 }
 
 /**
+ * Unpublish items from the LIVE site (across ALL locales) and set them to draft.
+ * Reversible — the CMS item is kept, just taken off the live site. Used to
+ * remove events that are no longer in the HubSpot feed.
+ */
+export async function unpublishItems(collectionId, itemIds) {
+  const localeIds = config.webflow.cmsLocaleIds || [];
+  const ids = [
+    ...new Set(
+      (itemIds || [])
+        .map((x) => (typeof x === 'string' ? x : x?.id))
+        .filter(Boolean)
+    ),
+  ];
+  if (!ids.length) return 0;
+  // One entry per (id, locale) — /items/live only touches the primary locale
+  // unless a cmsLocaleId is supplied, and the live site runs on AU.
+  const entries = localeIds.length
+    ? ids.flatMap((id) => localeIds.map((cmsLocaleId) => ({ id, cmsLocaleId })))
+    : ids.map((id) => ({ id }));
+  for (let i = 0; i < entries.length; i += 100) {
+    await webflowRequest('DELETE', `/collections/${collectionId}/items/live`, {
+      items: entries.slice(i, i + 100),
+    });
+    await sleep(300);
+  }
+  return ids.length;
+}
+
+/**
  * Build a lookup map of existing items keyed by their HubSpot ID field.
  */
 export function buildHubSpotIdMap(items) {

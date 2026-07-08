@@ -30,6 +30,7 @@ import {
   publishItems,
   buildHubSpotIdMap,
   deleteAllItems,
+  unpublishItems,
 } from './webflow.js';
 import { mapEvent, mapSpeaker, mapSponsor, mapAgenda } from './mappers.js';
 
@@ -357,6 +358,47 @@ async function main() {
   if (toPublish.length && !config.dryRun) {
     console.log(`\n  📤 Publishing ${toPublish.length} event(s)...`);
     await publishItems(config.webflow.collections.events, toPublish);
+  }
+
+  // ──────────────────────────────────────────────
+  // 6b. Reconcile — unpublish events no longer in the HubSpot feed.
+  //     hubspotEvents is the "should be live" set (published events AND
+  //     on-demand-approved past events — which report status "Expired", NOT
+  //     "Published", so we must key off the feed, not the raw status).
+  //     Anything currently live in Webflow whose hubspot-id isn't in the feed
+  //     is taken off the live site (unpublished, but kept in the CMS).
+  // ──────────────────────────────────────────────
+  const liveHsIds = new Set(
+    hubspotEvents.map((e) => String(e.hs_object_id)).filter(Boolean)
+  );
+  if (liveHsIds.size === 0) {
+    console.log(
+      '\n⚠  Reconcile skipped — feed returned 0 events (safety guard).'
+    );
+  } else {
+    const staleEventIds = [
+      ...new Set(
+        existingEvents
+          .filter((item) => {
+            const hsId = item.fieldData?.['hubspot-id'];
+            const isLive = !item.isDraft && !!item.lastPublished;
+            return hsId && isLive && !liveHsIds.has(String(hsId));
+          })
+          .map((item) => item.id)
+      ),
+    ];
+    if (!staleEventIds.length) {
+      console.log('\n🧹 Reconcile: no stale events to unpublish.');
+    } else if (config.dryRun) {
+      console.log(
+        `\n🧹 [DRY RUN] Would unpublish ${staleEventIds.length} stale event(s).`
+      );
+    } else {
+      console.log(
+        `\n🧹 Reconcile: unpublishing ${staleEventIds.length} event(s) no longer in the HubSpot feed...`
+      );
+      await unpublishItems(config.webflow.collections.events, staleEventIds);
+    }
   }
 
   // ──────────────────────────────────────────────
