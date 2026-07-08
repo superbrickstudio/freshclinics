@@ -200,16 +200,20 @@ export async function unpublishItems(collectionId, itemIds) {
     ),
   ];
   if (!ids.length) return 0;
-  // One entry per (id, locale) — /items/live only touches the primary locale
-  // unless a cmsLocaleId is supplied, and the live site runs on AU.
-  const entries = localeIds.length
-    ? ids.flatMap((id) => localeIds.map((cmsLocaleId) => ({ id, cmsLocaleId })))
-    : ids.map((id) => ({ id }));
-  for (let i = 0; i < entries.length; i += 100) {
-    await webflowRequest('DELETE', `/collections/${collectionId}/items/live`, {
-      items: entries.slice(i, i + 100),
-    });
-    await sleep(300);
+  // Unpublish each locale in its OWN request. Sending the same id for multiple
+  // locales in a single request only unpublishes the primary locale (Webflow
+  // keys the items array by id), which left the live AU copies published.
+  const locales = localeIds.length ? localeIds : [null];
+  for (const cmsLocaleId of locales) {
+    for (let i = 0; i < ids.length; i += 100) {
+      const items = ids
+        .slice(i, i + 100)
+        .map((id) => (cmsLocaleId ? { id, cmsLocaleId } : { id }));
+      await webflowRequest('DELETE', `/collections/${collectionId}/items/live`, {
+        items,
+      });
+      await sleep(300);
+    }
   }
   return ids.length;
 }
