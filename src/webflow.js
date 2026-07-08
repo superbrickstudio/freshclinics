@@ -48,6 +48,45 @@ function sleep(ms) {
  * Delete EVERY item in a collection (used by reset/rebuild).
  * Locale variants share an item id, so de-duplicate before deleting.
  */
+export async function deleteItems(collectionId, itemIds) {
+  const localeIds = config.webflow.cmsLocaleIds || [];
+  const ids = [
+    ...new Set(
+      (itemIds || [])
+        .map((x) => (typeof x === 'string' ? x : x?.id))
+        .filter(Boolean)
+    ),
+  ];
+  if (!ids.length) return 0;
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    // 1) Unpublish the live copies in EVERY locale (removes live pages).
+    const entries = localeIds.length
+      ? chunk.flatMap((id) => localeIds.map((cmsLocaleId) => ({ id, cmsLocaleId })))
+      : chunk.map((id) => ({ id }));
+    for (let j = 0; j < entries.length; j += 100) {
+      try {
+        await webflowRequest('DELETE', `/collections/${collectionId}/items/live`, {
+          items: entries.slice(j, j + 100),
+        });
+      } catch (err) {
+        console.warn(`     \u26a0 live unpublish: ${err.message}`);
+      }
+      await sleep(200);
+    }
+    // 2) Delete the staged items entirely.
+    try {
+      await webflowRequest('DELETE', `/collections/${collectionId}/items`, {
+        items: chunk.map((id) => ({ id })),
+      });
+    } catch (err) {
+      console.warn(`     \u26a0 staged delete: ${err.message}`);
+    }
+    await sleep(300);
+  }
+  return ids.length;
+}
+
 export async function deleteAllItems(collectionId) {
   // Gather ids from BOTH staged and live lists — a previously-deleted staged
   // item can leave a published (live) copy whose slug stays reserved.

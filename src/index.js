@@ -31,6 +31,7 @@ import {
   buildHubSpotIdMap,
   deleteAllItems,
   unpublishItems,
+  deleteItems,
 } from './webflow.js';
 import { mapEvent, mapSpeaker, mapSponsor, mapAgenda } from './mappers.js';
 
@@ -399,9 +400,9 @@ async function main() {
       );
     } else {
       console.log(
-        `\n🧹 Reconcile: unpublishing ${staleEventIds.length} event(s) no longer in the HubSpot feed...`
+        `\n🧹 Reconcile: deleting ${staleEventIds.length} event(s) no longer in the HubSpot feed...`
       );
-      await unpublishItems(config.webflow.collections.events, staleEventIds);
+      await deleteItems(config.webflow.collections.events, staleEventIds);
     }
   }
 
