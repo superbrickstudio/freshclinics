@@ -88,16 +88,13 @@ function slugify(text) {
  * Prioritises the direct link field; falls back to the HubSpot file ID.
  */
 function resolveCoverImage(event) {
+  // Only cover_image__file_link_ is a usable public URL that Webflow can fetch.
+  // cover_image__file_upload_ is just a HubSpot file ID and does NOT resolve to
+  // a fetchable URL, so we skip it rather than feed Webflow a dead link (which
+  // would show a broken-image icon). Proper fix: have the proxy resolve the
+  // file ID to a real CDN URL via HubSpot's Files API.
   if (event.cover_image__file_link_) {
     return { url: event.cover_image__file_link_ };
-  }
-  if (event.cover_image__file_upload_) {
-    // HubSpot file manager public URL pattern
-    // NOTE: Confirm this URL pattern with the client â the file ID may need
-    // a different base URL depending on their HubSpot portal configuration.
-    return {
-      url: `https://www.freshclinics.com/hubfs/${event.cover_image__file_upload_}`,
-    };
   }
   return null;
 }
