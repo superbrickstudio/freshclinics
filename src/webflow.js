@@ -14,7 +14,7 @@ const headers = {
 
 // ---------- Generic helpers ----------
 
-async function webflowRequest(method, path, body = null) {
+async function webflowRequest(method, path, body = null, attempt = 1) {
   const url = `${API_BASE}${path}`;
   const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
@@ -24,9 +24,19 @@ async function webflowRequest(method, path, body = null) {
   // Handle rate limiting (429) with retry
   if (res.status === 429) {
     const retryAfter = parseInt(res.headers.get('retry-after') || '2', 10);
-    console.log(`  ⏳ Rate limited, waiting ${retryAfter}s...`);
+    console.log(`  \u23f3 Rate limited, waiting ${retryAfter}s...`);
     await sleep(retryAfter * 1000);
-    return webflowRequest(method, path, body);
+    return webflowRequest(method, path, body, attempt);
+  }
+
+  // Transient Webflow server errors (500/502/503/504) — retry with backoff.
+  if (res.status >= 500 && attempt <= 4) {
+    const waitMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s, 8s
+    console.log(
+      `  \u23f3 Webflow ${res.status} (attempt ${attempt}/4) — retrying in ${waitMs / 1000}s...`
+    );
+    await sleep(waitMs);
+    return webflowRequest(method, path, body, attempt + 1);
   }
 
   if (!res.ok) {
