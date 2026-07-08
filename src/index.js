@@ -381,12 +381,12 @@ async function main() {
         existingEvents
           .filter((item) => {
             const hsId = item.fieldData?.['hubspot-id'];
-            // Anything ever published and no longer in the feed. Don't gate on
-            // isDraft — the primary locale may already be a draft while the
-            // live AU copy is still published; both must be unpublished.
-            return (
-              hsId && !!item.lastPublished && !liveHsIds.has(String(hsId))
-            );
+            // Anything in Webflow that isn't in the feed. We deliberately do
+            // NOT gate on isDraft/lastPublished: unpublishing the primary
+            // locale clears its lastPublished while the AU copy stays live, so
+            // those signals can't be trusted. Unpublish is idempotent, so
+            // re-touching an already-unpublished locale is harmless.
+            return hsId && !liveHsIds.has(String(hsId));
           })
           .map((item) => item.id)
       ),

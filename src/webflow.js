@@ -209,9 +209,14 @@ export async function unpublishItems(collectionId, itemIds) {
       const items = ids
         .slice(i, i + 100)
         .map((id) => (cmsLocaleId ? { id, cmsLocaleId } : { id }));
-      await webflowRequest('DELETE', `/collections/${collectionId}/items/live`, {
-        items,
-      });
+      try {
+        await webflowRequest('DELETE', `/collections/${collectionId}/items/live`, {
+          items,
+        });
+      } catch (err) {
+        // e.g. an item already unpublished in this locale — non-fatal.
+        console.warn(`     \u26a0 unpublish (${cmsLocaleId || 'primary'}): ${err.message}`);
+      }
       await sleep(300);
     }
   }
