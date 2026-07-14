@@ -279,9 +279,14 @@ export function mapEvent(hubspotEvent) {
     fieldData['cover-image'] = coverImg;
   }
 
-  // Registration / event link
-  if (hubspotEvent.event_registration_url) {
-    fieldData['event-link'] = hubspotEvent.event_registration_url;
+  // Event link — the registration URL, falling back to the webinar/meeting
+  // link so the CTA always has somewhere to go.
+  const eventLink =
+    hubspotEvent.event_registration_url ||
+    hubspotEvent.webinar_url ||
+    hubspotEvent.meeting_url;
+  if (eventLink) {
+    fieldData['event-link'] = eventLink;
   }
 
   // Webinar / virtual meeting URL (meeting_url is the newer field)
