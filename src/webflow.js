@@ -191,6 +191,11 @@ export async function createItem(collectionId, fieldData) {
  */
 export async function updateItem(collectionId, itemId, fieldData) {
   const localeIds = config.webflow.cmsLocaleIds || [];
+  // Slugs are generated when an item is created, but Webflow may suffix them
+  // to keep duplicate names unique (for example, "event-name-2"). Sending the
+  // original generated slug again on a later update can collide with another
+  // item. Omit it from PATCH requests so each item's existing URL is preserved.
+  const { slug: _slug, ...updateFieldData } = fieldData;
   if (localeIds.length > 1) {
     // Update the item in EVERY locale (same content) via the bulk endpoint.
     // Without a cmsLocaleId per entry, only the primary locale is updated,
@@ -199,7 +204,7 @@ export async function updateItem(collectionId, itemId, fieldData) {
       items: localeIds.map((cmsLocaleId) => ({
         id: itemId,
         cmsLocaleId,
-        fieldData,
+        fieldData: updateFieldData,
       })),
     });
   }
@@ -207,7 +212,7 @@ export async function updateItem(collectionId, itemId, fieldData) {
   return webflowRequest(
     'PATCH',
     `/collections/${collectionId}/items/${itemId}`,
-    { fieldData }
+    { fieldData: updateFieldData }
   );
 }
 

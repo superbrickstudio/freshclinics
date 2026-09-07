@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "sync": "node src/index.js",
-    "sync:dry-run": "DRY_RUN=true node src/index.js"
+    "sync:dry-run": "DRY_RUN=true node src/index.js",
+    "test": "node --test"
   },
   "dependencies": {
     "webflow-api": "^3.1.0"
