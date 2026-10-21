@@ -1,7 +1,8 @@
 name: Sync HubSpot Events to Webflow CMS
 
 on:
-  # Run twice daily at 6am and 6pm AEST (UTC+10)
+  # Run twice daily at 6am and 6pm AEST (UTC+10). GitHub can start scheduled
+  # runs late (sometimes by hours) when its runners are busy.
   schedule:
     - cron: '0 20 * * *'   # 6:00 AM AEST
     - cron: '0 8 * * *'    # 6:00 PM AEST
@@ -26,6 +27,14 @@ on:
           - 'false'
           - 'true'
 
+permissions:
+  contents: read
+
+# Never let a manual run and a scheduled run write to Webflow at the same time.
+concurrency:
+  group: hubspot-webflow-sync
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -34,15 +43,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '24'
 
-      - name: Install dependencies
-        run: npm install
+      - name: Run tests
+        run: npm test
 
       - name: Run sync
         env:

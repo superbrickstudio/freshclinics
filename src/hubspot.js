@@ -4,6 +4,7 @@
  */
 
 import { config } from './config.js';
+import { eventVisibility } from './mappers.js';
 
 const BASE = config.hubspot.proxyBaseUrl;
 
@@ -16,29 +17,35 @@ async function fetchJson(url) {
 }
 
 /**
- * Fetch all events from the proxy.
- * Returns only Published + Public events.
+ * Decide whether a HubSpot event belongs on the Webflow Event Calendar.
+ */
+export function shouldSync(e) {
+  const visibility = eventVisibility(e);
+  if (!visibility) return false;
+
+  // Upcoming/published events always sync — public ones, and members-only
+  // ones (shown greyed out with a Join Fresh CTA).
+  if (e.event_status === 'Published') return true;
+
+  // Past events sync only if approved for on-demand viewing (so their
+  // recording can appear). HubSpot returns booleans as strings — only an
+  // explicit "false" counts as false; anything else (incl. null/unset) is true.
+  // Members-only recordings stay off the public site.
+  if (e.event_status === 'Expired (Past Event)') {
+    if (visibility !== 'public') return false;
+    return String(e.on_demand_approved).toLowerCase() !== 'false';
+  }
+
+  return false;
+}
+
+/**
+ * Fetch all events from the proxy that should appear on the site.
  */
 export async function fetchEvents() {
   const data = await fetchJson(`${BASE}/events`);
   const events = data.events || [];
-
-  return events.filter((e) => {
-    // Public events only.
-    if (!e.event_visibility?.toLowerCase().includes('public')) return false;
-
-    // Upcoming/published events always sync.
-    if (e.event_status === 'Published') return true;
-
-    // Past events sync only if approved for on-demand viewing (so their
-    // recording can appear). HubSpot returns booleans as strings — only an
-    // explicit "false" counts as false; anything else (incl. null/unset) is true.
-    if (e.event_status === 'Expired (Past Event)') {
-      return String(e.on_demand_approved).toLowerCase() !== 'false';
-    }
-
-    return false;
-  });
+  return events.filter(shouldSync);
 }
 
 /**
