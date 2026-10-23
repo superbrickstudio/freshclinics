@@ -13,10 +13,10 @@
  *   description            → text-content-description, blurb (truncated)
  *   short_description__intro_content → intro-content (and the above when
  *                            description is empty)
- *   timezone               → duration (time zone used for the times)
+ *   timezone               → duration, timezone (e.g. AEDT, CT)
  *   start_time             → event-date
  *   end_time               → event-end-date
- *   address                → location (composite)
+ *   address                → location (composite; "Online" for virtual)
  *   event_suburb           → event-suburb
  *   event_state            → event-state
  *   event_postcode         → event-postcode
@@ -29,7 +29,7 @@
  *   type                   → event-type
  *   event_category         → event-category
  *   event_tags             → event-tags
- *   event_ticket_type      → ticket-type
+ *   event_ticket_type      → ticket-type (else Paid/Free from event_payment_type)
  *   event_payment_type     → payment-type
  *   available_capacity     → spots-remaining
  *   capacity_limit         → capacity-limit
@@ -105,14 +105,27 @@ function resolveCoverImage(event) {
  * Build a human-readable location string from granular fields.
  */
 function buildLocation(event) {
-  const parts = [
+  const place = [
     event.venue_name,
     event.address,
     event.event_suburb,
     event.event_state,
-    event.country,
   ].filter(Boolean);
-  return parts.join(', ') || null;
+  // Virtual events have no venue, so country alone ("Australia") reads oddly
+  if (!place.length && /virtual/i.test(event.event_type_ || '')) return 'Online';
+  return [...place, event.country].filter(Boolean).join(', ') || null;
+}
+
+/**
+ * Paid/Free for the Ticket Type field. HubSpot never fills event_ticket_type;
+ * the same answer lives in event_payment_type ("Free" / "Payment Required").
+ */
+function buildTicketType(event) {
+  if (event.event_ticket_type) return event.event_ticket_type;
+  const payment = String(event.event_payment_type || '').toLowerCase();
+  if (payment === 'free') return 'Free';
+  if (payment.includes('payment') || payment.includes('paid')) return 'Paid';
+  return null;
 }
 
 /**
@@ -209,6 +222,24 @@ export function isOnZoom(event) {
   if (/zoom/i.test(event.virtual_event_platform || '')) return true;
   return [event.webinar_url, event.meeting_url].some((url) =>
     /^https?:\/\/([^/]+\.)?zoom\.us\//i.test(url || '')
+  );
+}
+
+/**
+ * Short time zone label for the Timezone field, at the event's own date so
+ * daylight saving is right: AEDT/AEST/ACST/AWST for Australia, ET/CT/PT for
+ * the US.
+ */
+export function buildTimeZoneLabel(event) {
+  if (!event.start_time) return null;
+  const timeZone = eventTimeZone(event);
+  const [locale, timeZoneName] = timeZone.startsWith('Australia/')
+    ? ['en-AU', 'short']
+    : ['en-US', 'shortGeneric'];
+  return (
+    new Intl.DateTimeFormat(locale, { timeZone, timeZoneName })
+      .formatToParts(new Date(event.start_time))
+      .find((p) => p.type === 'timeZoneName')?.value || null
   );
 }
 
@@ -339,6 +370,7 @@ export function mapEvent(hubspotEvent) {
     'event-date': hubspotEvent.start_time || null,
     'event-end-date': hubspotEvent.end_time || null,
     duration: buildDuration(hubspotEvent),
+    timezone: buildTimeZoneLabel(hubspotEvent),
     'event-state': hubspotEvent.event_state || null,
     'event-suburb': hubspotEvent.event_suburb || null,
     'event-postcode': hubspotEvent.event_postcode
@@ -353,7 +385,7 @@ export function mapEvent(hubspotEvent) {
     'event-type': hubspotEvent.event_type_ || hubspotEvent.type || null,
     'event-category': hubspotEvent.event_category || null,
     'event-tags': hubspotEvent.event_tags || null,
-    'ticket-type': hubspotEvent.event_ticket_type || null,
+    'ticket-type': buildTicketType(hubspotEvent),
     'payment-type': hubspotEvent.event_payment_type || null,
     'spots-remaining': hubspotEvent.available_capacity
       ? parseInt(hubspotEvent.available_capacity, 10)

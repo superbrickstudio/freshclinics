@@ -129,3 +129,23 @@ test("HubSpot's timezone wins over the country/state guess", () => {
     'America/Chicago'
   );
 });
+
+test('Timezone field gets a short label for the event date', () => {
+  const at = (timezone, start_time) =>
+    mapEvent({ hs_object_id: '1', event_name: 'T', timezone, start_time, end_time: start_time }).timezone;
+  assert.equal(at('Australia/Sydney', '2026-11-04T08:00:00Z'), 'AEDT');
+  assert.equal(at('Australia/Sydney', '2026-07-04T08:00:00Z'), 'AEST');
+  assert.equal(at('Australia/Perth', '2026-11-04T08:00:00Z'), 'AWST');
+  assert.equal(at('America/Chicago', '2026-11-09T19:00:00Z'), 'CT');
+});
+
+test('Ticket Type is Paid/Free and virtual events read "Online"', () => {
+  const base = { hs_object_id: '1', event_name: 'T' };
+  assert.equal(mapEvent({ ...base, event_payment_type: 'Free' })['ticket-type'], 'Free');
+  assert.equal(mapEvent({ ...base, event_payment_type: 'Payment Required' })['ticket-type'], 'Paid');
+  assert.equal(mapEvent({ ...base, event_type_: 'Virtual', country: 'Australia' }).location, 'Online');
+  assert.equal(
+    mapEvent({ ...base, event_type_: 'In-Person', venue_name: 'Hotel', event_state: 'NSW', country: 'Australia' }).location,
+    'Hotel, NSW, Australia'
+  );
+});
