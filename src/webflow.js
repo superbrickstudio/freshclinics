@@ -217,9 +217,12 @@ export async function updateItem(collectionId, itemId, fieldData) {
 }
 
 /**
- * Publish an array of item IDs in a collection.
+ * Publish an array of item IDs in a collection, in EVERY locale.
+ * The plain `itemIds` form only publishes the primary (US) locale, which left
+ * AU updates staged but not live until someone published the whole site.
  */
 export async function publishItems(collectionId, itemIds) {
+  const localeIds = config.webflow.cmsLocaleIds || [];
   // Accept ids or item objects; reduce to unique non-empty id strings.
   const ids = [
     ...new Set(
@@ -229,12 +232,16 @@ export async function publishItems(collectionId, itemIds) {
     ),
   ];
   if (!ids.length) return;
-  // Webflow allows max 100 items per publish call
-  for (let i = 0; i < ids.length; i += 100) {
-    const batch = ids.slice(i, i + 100);
-    await webflowRequest('POST', `/collections/${collectionId}/items/publish`, {
-      itemIds: batch,
-    });
+  // Webflow allows max 100 per publish call; with locales, keep the number of
+  // item × locale variants per call at 100 or under.
+  const batchSize = localeIds.length > 1 ? Math.floor(100 / localeIds.length) : 100;
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const batch = ids.slice(i, i + batchSize);
+    const body =
+      localeIds.length > 1
+        ? { items: batch.map((id) => ({ id, cmsLocaleIds: localeIds })) }
+        : { itemIds: batch };
+    await webflowRequest('POST', `/collections/${collectionId}/items/publish`, body);
     await sleep(300);
   }
 }

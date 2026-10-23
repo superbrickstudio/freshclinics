@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { shouldSync } from '../src/hubspot.js';
 import { mapEvent, eventTimeZone, isOnZoom } from '../src/mappers.js';
-import { hasChanges, uniqueSlug } from '../src/sync-utils.js';
+import { hasChanges, sameImage, uniqueSlug } from '../src/sync-utils.js';
 
 const PUBLIC = 'Public (available to non-members)';
 const PRIVATE = 'Private (restricted to members only)';
@@ -147,5 +147,54 @@ test('Ticket Type is Paid/Free and virtual events read "Online"', () => {
   assert.equal(
     mapEvent({ ...base, event_type_: 'In-Person', venue_name: 'Hotel', event_state: 'NSW', country: 'Australia' }).location,
     'Hotel, NSW, Australia'
+  );
+});
+
+test('images rehosted on the Webflow CDN count as unchanged', () => {
+  const cdn = 'https://cdn.prod.website-files.com/69378d6ff1c1ced8fb14e11e/';
+  assert.equal(
+    sameImage(
+      cdn + '6adae28c99e6546368a3d07c_Kiss_and_Glow_banner_v2.webp',
+      'https://6930926.fs1.hubspotusercontent-na1.net/hubfs/6930926/event-covers/Kiss_and_Glow_banner_v2.webp'
+    ),
+    true
+  );
+  // Double-encoded spaces in the CDN copy
+  assert.equal(
+    sameImage(
+      cdn + '6ac7b2fc0f1e4a300bdb00cd_Fresh2U%2520New%2520Jersey-5.png',
+      'https://example.com/hubfs/Fresh2U%20New%20Jersey-5.png'
+    ),
+    true
+  );
+  assert.equal(sameImage(cdn + 'abc_old-logo.png', 'https://example.com/new-logo.png'), false);
+  assert.equal(sameImage(undefined, 'https://example.com/logo.png'), false);
+  assert.equal(
+    hasChanges(
+      { fieldData: { logo: { url: cdn + 'abc_logo.png' } } },
+      { logo: { url: 'https://example.com/logo.png' } }
+    ),
+    false
+  );
+});
+
+test('format conversions and date formatting do not count as changes', () => {
+  const cdn = 'https://cdn.prod.website-files.com/69378d6ff1c1ced8fb14e11e/';
+  const hub = 'https://6930926.fs1.hubspotusercontent-na1.net/hubfs/6930926/HS%20Events%20Platform%202026/';
+  assert.equal(
+    sameImage(cdn + '6adae25818c2d03efc4dcf25_1792718203282-sponsor.png', hub + 'sponsors/1792718203282-sponsor.webp'),
+    true
+  );
+  assert.equal(
+    sameImage(cdn + '6ad159c18770ac87a5baf40f_Kimberly%2520Starr%2520Headshot.jpeg', hub + 'speakers/Kimberly%20Starr%20Headshot.jpg'),
+    true
+  );
+  assert.equal(
+    hasChanges({ fieldData: { 'event-date': '2026-11-04T08:00:00.000Z' } }, { 'event-date': '2026-11-04T08:00:00Z' }),
+    false
+  );
+  assert.equal(
+    hasChanges({ fieldData: { 'event-date': '2026-11-04T08:00:00.000Z' } }, { 'event-date': '2026-11-05T08:00:00Z' }),
+    true
   );
 });
