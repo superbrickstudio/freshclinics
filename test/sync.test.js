@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { shouldSync } from '../src/hubspot.js';
-import { mapEvent, eventTimeZone } from '../src/mappers.js';
+import { mapEvent, eventTimeZone, isOnZoom } from '../src/mappers.js';
 import { hasChanges, uniqueSlug } from '../src/sync-utils.js';
 
 const PUBLIC = 'Public (available to non-members)';
@@ -92,4 +92,60 @@ test('hasChanges notices reference changes and cleared links', () => {
   assert.equal(hasChanges(existing, { name: 'Event', 'event-speakers': ['a', 'b', 'c'] }), true);
   assert.equal(hasChanges(existing, { name: 'Event', 'event-link': null }), true);
   assert.equal(hasChanges({ fieldData: { name: 'Event' } }, { name: 'Event', 'event-link': null }), false);
+});
+
+test('About section falls back to intro content when description is empty', () => {
+  const intro = '<p>Join us for an exclusive webinar.</p>';
+  const base = { hs_object_id: '1', event_name: 'Test', short_description__intro_content: intro };
+  assert.equal(mapEvent(base)['text-content-description'], intro);
+  assert.equal(
+    mapEvent({ ...base, description: '<p>Full description</p>' })['text-content-description'],
+    '<p>Full description</p>'
+  );
+});
+
+test('only Zoom events are flagged on-zoom', () => {
+  assert.equal(isOnZoom({ virtual_event_platform: 'Zoom (Fresh Clinics)' }), true);
+  assert.equal(isOnZoom({ meeting_url: 'https://us06web.zoom.us/j/123' }), true);
+  assert.equal(isOnZoom({ virtual_event_platform: 'Other' }), false);
+  assert.equal(
+    isOnZoom({
+      virtual_event_platform: 'External (Sponsor-Provided)',
+      meeting_url: 'https://events.teoxane.com/event/kissandglow/register',
+    }),
+    false
+  );
+  assert.equal(isOnZoom({}), false);
+});
+
+test("HubSpot's timezone wins over the country/state guess", () => {
+  // Online Texas event with no state: the guess would be Eastern
+  assert.equal(
+    eventTimeZone({ country: 'United States', timezone: 'America/Chicago' }),
+    'America/Chicago'
+  );
+  assert.equal(
+    eventTimeZone({ country: 'United States', event_state: 'Texas', timezone: 'Not/AZone' }),
+    'America/Chicago'
+  );
+});
+
+test('Timezone field gets a short label for the event date', () => {
+  const at = (timezone, start_time) =>
+    mapEvent({ hs_object_id: '1', event_name: 'T', timezone, start_time, end_time: start_time }).timezone;
+  assert.equal(at('Australia/Sydney', '2026-11-04T08:00:00Z'), 'AEDT');
+  assert.equal(at('Australia/Sydney', '2026-07-04T08:00:00Z'), 'AEST');
+  assert.equal(at('Australia/Perth', '2026-11-04T08:00:00Z'), 'AWST');
+  assert.equal(at('America/Chicago', '2026-11-09T19:00:00Z'), 'CT');
+});
+
+test('Ticket Type is Paid/Free and virtual events read "Online"', () => {
+  const base = { hs_object_id: '1', event_name: 'T' };
+  assert.equal(mapEvent({ ...base, event_payment_type: 'Free' })['ticket-type'], 'Free');
+  assert.equal(mapEvent({ ...base, event_payment_type: 'Payment Required' })['ticket-type'], 'Paid');
+  assert.equal(mapEvent({ ...base, event_type_: 'Virtual', country: 'Australia' }).location, 'Online');
+  assert.equal(
+    mapEvent({ ...base, event_type_: 'In-Person', venue_name: 'Hotel', event_state: 'NSW', country: 'Australia' }).location,
+    'Hotel, NSW, Australia'
+  );
 });
