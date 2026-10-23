@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { shouldSync } from '../src/hubspot.js';
-import { mapEvent, eventTimeZone } from '../src/mappers.js';
+import { mapEvent, eventTimeZone, isOnZoom } from '../src/mappers.js';
 import { hasChanges, uniqueSlug } from '../src/sync-utils.js';
 
 const PUBLIC = 'Public (available to non-members)';
@@ -92,4 +92,40 @@ test('hasChanges notices reference changes and cleared links', () => {
   assert.equal(hasChanges(existing, { name: 'Event', 'event-speakers': ['a', 'b', 'c'] }), true);
   assert.equal(hasChanges(existing, { name: 'Event', 'event-link': null }), true);
   assert.equal(hasChanges({ fieldData: { name: 'Event' } }, { name: 'Event', 'event-link': null }), false);
+});
+
+test('About section falls back to intro content when description is empty', () => {
+  const intro = '<p>Join us for an exclusive webinar.</p>';
+  const base = { hs_object_id: '1', event_name: 'Test', short_description__intro_content: intro };
+  assert.equal(mapEvent(base)['text-content-description'], intro);
+  assert.equal(
+    mapEvent({ ...base, description: '<p>Full description</p>' })['text-content-description'],
+    '<p>Full description</p>'
+  );
+});
+
+test('only Zoom events are flagged on-zoom', () => {
+  assert.equal(isOnZoom({ virtual_event_platform: 'Zoom (Fresh Clinics)' }), true);
+  assert.equal(isOnZoom({ meeting_url: 'https://us06web.zoom.us/j/123' }), true);
+  assert.equal(isOnZoom({ virtual_event_platform: 'Other' }), false);
+  assert.equal(
+    isOnZoom({
+      virtual_event_platform: 'External (Sponsor-Provided)',
+      meeting_url: 'https://events.teoxane.com/event/kissandglow/register',
+    }),
+    false
+  );
+  assert.equal(isOnZoom({}), false);
+});
+
+test("HubSpot's timezone wins over the country/state guess", () => {
+  // Online Texas event with no state: the guess would be Eastern
+  assert.equal(
+    eventTimeZone({ country: 'United States', timezone: 'America/Chicago' }),
+    'America/Chicago'
+  );
+  assert.equal(
+    eventTimeZone({ country: 'United States', event_state: 'Texas', timezone: 'Not/AZone' }),
+    'America/Chicago'
+  );
 });

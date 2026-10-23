@@ -11,6 +11,9 @@
  *   event_name             → name, title
  *   hs_object_id           → hubspot-id
  *   description            → text-content-description, blurb (truncated)
+ *   short_description__intro_content → intro-content (and the above when
+ *                            description is empty)
+ *   timezone               → duration (time zone used for the times)
  *   start_time             → event-date
  *   end_time               → event-end-date
  *   address                → location (composite)
@@ -31,8 +34,7 @@
  *   available_capacity     → spots-remaining
  *   capacity_limit         → capacity-limit
  *   event_visibility       → members-only (on for "Private ..." events)
- *   event_location         → on-zoom (derived)
- *   virtual_event_platform → on-zoom (derived)
+ *   virtual_event_platform → on-zoom (only when the platform or link is Zoom)
  *   webinar_url            → webinar-url    (cleared for members-only)
  *   event_registration_url → event-link     (cleared for members-only)
  *   recording_file_url     → recording-url  (cleared for members-only)
@@ -170,12 +172,23 @@ const AU_STATE_TIME_ZONES = {
   nt: 'Australia/Darwin',
 };
 
+function isValidTimeZone(zone) {
+  try {
+    new Intl.DateTimeFormat('en-AU', { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Pick the time zone an event's times should be shown in, from its country
- * and state. Online events with no state fall back to Eastern (US) or
- * Sydney (AU).
+ * Pick the time zone an event's times should be shown in. Uses HubSpot's
+ * `timezone` (event detail endpoint) when set; otherwise guesses from country
+ * and state, with online events falling back to Eastern (US) or Sydney (AU).
  */
 export function eventTimeZone(event) {
+  if (event.timezone && isValidTimeZone(event.timezone)) return event.timezone;
+
   const country = String(event.country || '').trim().toLowerCase();
   const state = String(event.event_state || '').trim().toLowerCase();
 
@@ -186,6 +199,17 @@ export function eventTimeZone(event) {
     return 'America/New_York';
   }
   return AU_STATE_TIME_ZONES[state] || 'Australia/Sydney';
+}
+
+/**
+ * True only for events actually run on Zoom. The site labels these "Zoom", so
+ * other platforms ("Other", "External (Sponsor-Provided)") must not count.
+ */
+export function isOnZoom(event) {
+  if (/zoom/i.test(event.virtual_event_platform || '')) return true;
+  return [event.webinar_url, event.meeting_url].some((url) =>
+    /^https?:\/\/([^/]+\.)?zoom\.us\//i.test(url || '')
+  );
 }
 
 /**
@@ -307,7 +331,11 @@ export function mapEvent(hubspotEvent) {
     title: name,
     blurb: buildBlurb(hubspotEvent),
     location: buildLocation(hubspotEvent),
-    'text-content-description': toRichHtml(hubspotEvent.description),
+    // Newer HubSpot events only fill in the intro content, which would leave
+    // the page's "About this event" section empty.
+    'text-content-description': toRichHtml(
+      hubspotEvent.description || hubspotEvent.short_description__intro_content
+    ),
     'event-date': hubspotEvent.start_time || null,
     'event-end-date': hubspotEvent.end_time || null,
     duration: buildDuration(hubspotEvent),
@@ -334,11 +362,7 @@ export function mapEvent(hubspotEvent) {
       ? parseInt(hubspotEvent.capacity_limit, 10)
       : null,
     'members-only': isMembersOnly(hubspotEvent),
-    'on-zoom': !!(
-      hubspotEvent.virtual_event_platform ||
-      hubspotEvent.webinar_url ||
-      hubspotEvent.meeting_url
-    ),
+    'on-zoom': isOnZoom(hubspotEvent),
     'agenda-displayed': isTrue(hubspotEvent.agenda_breakdown_to_be_displayed),
     featured: isTrue(hubspotEvent.featured_event),
     'event-series': hubspotEvent.event_series || null,
