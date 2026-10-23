@@ -2,17 +2,16 @@
  * Fresh Clinics — HubSpot → Webflow CMS Sync
  *
  * This script:
- * 1. Fetches published public events from the HubSpot proxy
+ * 1. Fetches published events (public and members-only) from the HubSpot proxy
  * 2. For each event, fetches full detail, speakers, sponsors, and agenda
  * 3. Upserts speakers and sponsors into their Webflow collections first
  * 4. Upserts agenda items into the Event Agendas collection
  * 5. Upserts events into the Events collection (with references)
  * 6. Publishes all created/updated items
  *
- * Designed to run on a schedule (daily or more frequently) via:
- * - GitHub Actions cron
- * - Vercel Cron
- * - Any serverless scheduler
+ * Runs on a schedule via GitHub Actions (.github/workflows/sync.yml).
+ * A failure on one item is logged and the sync carries on; the run exits
+ * non-zero at the end so GitHub flags it.
  */
 
 import { config } from './config.js';
@@ -31,91 +30,68 @@ import {
   buildHubSpotIdMap,
   deleteAllItems,
 } from './webflow.js';
-import { mapEvent, mapSpeaker, mapSponsor, mapAgenda } from './mappers.js';
+import {
+  mapEvent,
+  mapSpeaker,
+  mapSponsor,
+  mapAgenda,
+  isMembersOnly,
+} from './mappers.js';
+import { sleep, hasChanges, uniqueSlug } from './sync-utils.js';
 
-// ---------- Helpers ----------
+// Items that failed to create/update, reported at the end of the run.
+const failures = [];
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// ---------- Upsert a collection ----------
 
-function hasChanges(existing, incoming) {
-  const existingData = existing.fieldData || {};
-  for (const [key, val] of Object.entries(incoming)) {
-    // Skip reference fields (handled separately) and slug
-    if (
-      key === 'slug' ||
-      key === 'event-speakers' ||
-      key === 'event-sponsors' ||
-      key === 'agenda'
-    )
-      continue;
-
-    const existingVal = existingData[key];
-
-    // Handle image/link objects
-    if (val && typeof val === 'object' && val.url) {
-      if (existingVal?.url !== val.url) return true;
-      continue;
-    }
-
-    // Handle booleans
-    if (typeof val === 'boolean') {
-      if (existingVal !== val) return true;
-      continue;
-    }
-
-    if (String(existingVal ?? '') !== String(val ?? '')) return true;
-  }
-  return false;
-}
-
-// ---------- Sync a child collection (speakers, sponsors, or agendas) ----------
-
-async function syncChildCollection(collectionId, hubspotItems, mapper, label) {
+/**
+ * Create or update items in a Webflow collection, then publish them.
+ * `entries` is an array of { hsId, fieldData }.
+ * Returns a refreshed HubSpot ID → Webflow item map for reference linking.
+ */
+async function upsertCollection(collectionId, entries, label) {
   console.log(`\n📦 Syncing ${label}...`);
 
   const existingItems = await getAllItems(collectionId);
   const hsIdMap = buildHubSpotIdMap(existingItems);
+  const takenSlugs = new Set(
+    existingItems.map((i) => i.fieldData?.slug).filter(Boolean)
+  );
 
   const createdIds = [];
   const updatedIds = [];
 
-  // De-duplicate by HubSpot ID (same item may appear across events)
-  const uniqueMap = new Map();
-  for (const item of hubspotItems) {
-    const hsId = String(item.hs_object_id || item.hs_id || item.id || '');
-    if (hsId && !uniqueMap.has(hsId)) {
-      uniqueMap.set(hsId, item);
-    }
-  }
-
-  for (const [hsId, hubspotItem] of uniqueMap) {
-    const fieldData = mapper(hubspotItem);
+  for (const { hsId, fieldData } of entries) {
     const existing = hsIdMap.get(hsId);
 
-    if (existing) {
-      if (hasChanges(existing, fieldData)) {
+    try {
+      if (existing) {
+        if (!hasChanges(existing, fieldData)) {
+          console.log(`  ⏭  No changes: ${fieldData.name}`);
+          continue;
+        }
         if (config.dryRun) {
           console.log(`  [DRY RUN] Would update ${label}: ${fieldData.name}`);
-        } else {
-          console.log(`  ✏️  Updating ${label}: ${fieldData.name}`);
-          await updateItem(collectionId, existing.id, fieldData);
-          updatedIds.push(existing.id);
-          await sleep(300);
+          continue;
         }
+        console.log(`  ✏️  Updating ${label}: ${fieldData.name}`);
+        await updateItem(collectionId, existing.id, fieldData);
+        updatedIds.push(existing.id);
       } else {
-        console.log(`  ⏭  No changes: ${fieldData.name}`);
-      }
-    } else {
-      if (config.dryRun) {
-        console.log(`  [DRY RUN] Would create ${label}: ${fieldData.name}`);
-      } else {
+        const slug = uniqueSlug(fieldData.slug, hsId, takenSlugs);
+        takenSlugs.add(slug);
+        if (config.dryRun) {
+          console.log(`  [DRY RUN] Would create ${label}: ${fieldData.name} (/${slug})`);
+          continue;
+        }
         console.log(`  ➕ Creating ${label}: ${fieldData.name}`);
-        const created = await createItem(collectionId, fieldData);
+        const created = await createItem(collectionId, { ...fieldData, slug });
         createdIds.push(created.id);
-        await sleep(300);
       }
+      await sleep(300);
+    } catch (err) {
+      console.error(`  ❌ ${label} "${fieldData.name}" (HubSpot ${hsId}): ${err.message}`);
+      failures.push(`${label}: ${fieldData.name} (HubSpot ${hsId})`);
     }
   }
 
@@ -133,9 +109,29 @@ async function syncChildCollection(collectionId, hubspotItems, mapper, label) {
   // Return refreshed map for reference linking
   if (toPublish.length) {
     const refreshed = await getAllItems(collectionId);
-    return buildHubSpotIdMap(refreshed);
+    return { hsIdMap: buildHubSpotIdMap(refreshed), createdIds, updatedIds };
   }
-  return hsIdMap;
+  return { hsIdMap, createdIds, updatedIds };
+}
+
+/**
+ * Map child items (speakers, sponsors, agendas) and de-duplicate by HubSpot
+ * ID — the same speaker or sponsor can appear on several events.
+ */
+function childEntries(hubspotItems, mapper) {
+  const entries = new Map();
+  for (const item of hubspotItems) {
+    const hsId = String(item.hs_object_id || item.hs_id || item.id || '');
+    if (hsId && !entries.has(hsId)) {
+      entries.set(hsId, { hsId, fieldData: mapper(item) });
+    }
+  }
+  return [...entries.values()];
+}
+
+/** HubSpot IDs → Webflow item IDs, dropping any that aren't in Webflow. */
+function resolveRefs(hsIds, hsIdMap) {
+  return (hsIds || []).map((hsId) => hsIdMap.get(hsId)?.id).filter(Boolean);
 }
 
 // ---------- Main sync ----------
@@ -145,6 +141,10 @@ async function main() {
   console.log(`   Mode: ${config.dryRun ? 'DRY RUN' : 'LIVE'}`);
   console.log(`   Proxy: ${config.hubspot.proxyBaseUrl}`);
   console.log('');
+
+  if (!config.webflow.apiToken) {
+    throw new Error('WEBFLOW_API_TOKEN is not set');
+  }
 
   // One-time rebuild: wipe every collection so items are recreated cleanly
   // (e.g. across all locales). Order doesn't matter here — the sync below
@@ -165,7 +165,11 @@ async function main() {
   // ──────────────────────────────────────────────
   console.log('📡 Fetching events from HubSpot proxy...');
   const hubspotEvents = await fetchEvents();
-  console.log(`   Found ${hubspotEvents.length} published public event(s)`);
+  const membersOnlyCount = hubspotEvents.filter(isMembersOnly).length;
+  console.log(
+    `   Found ${hubspotEvents.length} event(s) to sync ` +
+      `(${hubspotEvents.length - membersOnlyCount} public, ${membersOnlyCount} members-only)`
+  );
 
   if (!hubspotEvents.length) {
     console.log('   No events to sync. Done.');
@@ -185,7 +189,7 @@ async function main() {
   const eventDetailMap = new Map();    // eventHsId → merged detail object
 
   for (const event of hubspotEvents) {
-    const eventId = event.hs_object_id;
+    const eventId = String(event.hs_object_id);
     console.log(`   Event: ${event.event_name} (${eventId})`);
 
     // Fetch full event detail (has extra fields like recording_file_url, agenda toggle)
@@ -249,115 +253,50 @@ async function main() {
   }
 
   // ──────────────────────────────────────────────
-  // 3. Sync speakers (so we have Webflow IDs for references)
+  // 3–5. Sync speakers, sponsors and agendas (so we have Webflow IDs for references)
   // ──────────────────────────────────────────────
-  const speakerHsMap = await syncChildCollection(
+  const { hsIdMap: speakerHsMap } = await upsertCollection(
     config.webflow.collections.speakers,
-    allSpeakers,
-    mapSpeaker,
+    childEntries(allSpeakers, mapSpeaker),
     'Speakers'
   );
-
-  // ──────────────────────────────────────────────
-  // 4. Sync sponsors
-  // ──────────────────────────────────────────────
-  const sponsorHsMap = await syncChildCollection(
+  const { hsIdMap: sponsorHsMap } = await upsertCollection(
     config.webflow.collections.sponsors,
-    allSponsors,
-    mapSponsor,
+    childEntries(allSponsors, mapSponsor),
     'Sponsors'
   );
-
-  // ──────────────────────────────────────────────
-  // 5. Sync agendas
-  // ──────────────────────────────────────────────
-  const agendaHsMap = await syncChildCollection(
+  const { hsIdMap: agendaHsMap } = await upsertCollection(
     config.webflow.collections.agendas,
-    allAgendas,
-    mapAgenda,
+    childEntries(allAgendas, mapAgenda),
     'Agendas'
   );
 
   // ──────────────────────────────────────────────
   // 6. Sync events (with references to speakers, sponsors, agendas)
   // ──────────────────────────────────────────────
-  console.log('\n📦 Syncing Events...');
-  const existingEvents = await getAllItems(config.webflow.collections.events);
-  const eventHsMap = buildHubSpotIdMap(existingEvents);
-
-  const createdEventIds = [];
-  const updatedEventIds = [];
-
+  const eventEntries = [];
   for (const [eventHsId, mergedEvent] of eventDetailMap) {
     const fieldData = mapEvent(mergedEvent);
 
-    // Resolve speaker references (HubSpot IDs → Webflow item IDs)
-    const speakerHsIds = eventSpeakerMap.get(eventHsId) || [];
-    const speakerWebflowIds = speakerHsIds
-      .map((hsId) => speakerHsMap.get(hsId)?.id)
-      .filter(Boolean);
-    if (speakerWebflowIds.length) {
-      fieldData['event-speakers'] = speakerWebflowIds;
+    // References are only sent when there is at least one, so a speaker fetch
+    // that failed (returns []) never wipes an event's existing speakers.
+    const refs = {
+      'event-speakers': resolveRefs(eventSpeakerMap.get(eventHsId), speakerHsMap),
+      'event-sponsors': resolveRefs(eventSponsorMap.get(eventHsId), sponsorHsMap),
+      agenda: resolveRefs(eventAgendaMap.get(eventHsId), agendaHsMap),
+    };
+    for (const [key, ids] of Object.entries(refs)) {
+      if (ids.length) fieldData[key] = ids;
     }
 
-    // Resolve sponsor references
-    const sponsorHsIds = eventSponsorMap.get(eventHsId) || [];
-    const sponsorWebflowIds = sponsorHsIds
-      .map((hsId) => sponsorHsMap.get(hsId)?.id)
-      .filter(Boolean);
-    if (sponsorWebflowIds.length) {
-      fieldData['event-sponsors'] = sponsorWebflowIds;
-    }
-
-    // Resolve agenda references
-    const agendaHsIds = eventAgendaMap.get(eventHsId) || [];
-    const agendaWebflowIds = agendaHsIds
-      .map((hsId) => agendaHsMap.get(hsId)?.id)
-      .filter(Boolean);
-    if (agendaWebflowIds.length) {
-      fieldData['agenda'] = agendaWebflowIds;
-    }
-
-    const existing = eventHsMap.get(eventHsId);
-
-    if (existing) {
-      if (hasChanges(existing, fieldData)) {
-        if (config.dryRun) {
-          console.log(`  [DRY RUN] Would update event: ${fieldData.name}`);
-        } else {
-          console.log(`  ✏️  Updating event: ${fieldData.name}`);
-          await updateItem(
-            config.webflow.collections.events,
-            existing.id,
-            fieldData
-          );
-          updatedEventIds.push(existing.id);
-          await sleep(300);
-        }
-      } else {
-        console.log(`  ⏭  No changes: ${fieldData.name}`);
-      }
-    } else {
-      if (config.dryRun) {
-        console.log(`  [DRY RUN] Would create event: ${fieldData.name}`);
-      } else {
-        console.log(`  ➕ Creating event: ${fieldData.name}`);
-        const created = await createItem(
-          config.webflow.collections.events,
-          fieldData
-        );
-        createdEventIds.push(created.id);
-        await sleep(300);
-      }
-    }
+    eventEntries.push({ hsId: eventHsId, fieldData });
   }
 
-  // Publish events
-  const toPublish = [...createdEventIds, ...updatedEventIds];
-  if (toPublish.length && !config.dryRun) {
-    console.log(`\n  📤 Publishing ${toPublish.length} event(s)...`);
-    await publishItems(config.webflow.collections.events, toPublish);
-  }
+  const { createdIds, updatedIds } = await upsertCollection(
+    config.webflow.collections.events,
+    eventEntries,
+    'Events'
+  );
 
   // ──────────────────────────────────────────────
   // 7. Summary
@@ -365,8 +304,13 @@ async function main() {
   console.log('\n' + '='.repeat(50));
   console.log('🏁 Sync complete!');
   console.log(
-    `   Events:   ${createdEventIds.length} new, ${updatedEventIds.length} updated`
+    `   Events:   ${createdIds.length} new, ${updatedIds.length} updated`
   );
+  if (failures.length) {
+    console.log(`   ❌ ${failures.length} item(s) failed:`);
+    for (const f of failures) console.log(`      - ${f}`);
+    process.exitCode = 1;
+  }
   console.log('='.repeat(50));
 }
 

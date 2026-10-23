@@ -1,70 +1,70 @@
 /**
- * Field mappers: transform HubSpot proxy JSON â Webflow CMS fieldData.
+ * Field mappers: transform HubSpot proxy JSON → Webflow CMS fieldData.
  *
  * Each mapper returns an object whose keys match the Webflow collection
  * field slugs exactly. HubSpot field names are taken from the official
  * "HubSpot Event Platform Properties" spreadsheet.
  *
- * HubSpot internal names â Webflow slugs:
+ * HubSpot internal names → Webflow slugs:
  *
  * EVENTS:
- *   event_name             â name, title
- *   hs_object_id           â hubspot-id
- *   description            â text-content-description, blurb (truncated)
- *   start_time             â event-date
- *   end_time               â event-end-date
- *   address                â location (composite)
- *   event_suburb           â event-suburb
- *   event_state            â event-state
- *   event_postcode         â event-postcode
- *   country                â country
- *   venue_name             â venue-name
- *   cover_image__file_link_      â cover-image
- *   cover_image__file_upload_    â cover-image (fallback)
- *   ticket_price           â ticket-price
- *   currency               â currency
- *   type                   â event-type
- *   event_category         â event-category
- *   event_tags             â event-tags
- *   event_ticket_type      â ticket-type
- *   event_payment_type     â payment-type
- *   available_capacity     â spots-remaining
- *   capacity_limit         â capacity-limit
- *   event_visibility       â members-only (inverted)
- *   event_location         â on-zoom (derived)
- *   virtual_event_platform â on-zoom (derived)
- *   webinar_url            â webinar-url
- *   event_registration_url â event-link
- *   recording_file_url     â recording-url
- *   agenda_breakdown_to_be_displayed â agenda-displayed
+ *   event_name             → name, title
+ *   hs_object_id           → hubspot-id
+ *   description            → text-content-description, blurb (truncated)
+ *   start_time             → event-date
+ *   end_time               → event-end-date
+ *   address                → location (composite)
+ *   event_suburb           → event-suburb
+ *   event_state            → event-state
+ *   event_postcode         → event-postcode
+ *   country                → country
+ *   venue_name             → venue-name
+ *   cover_image__file_link_      → cover-image
+ *   cover_image__file_upload_    → cover-image (fallback)
+ *   ticket_price           → ticket-price
+ *   currency               → currency
+ *   type                   → event-type
+ *   event_category         → event-category
+ *   event_tags             → event-tags
+ *   event_ticket_type      → ticket-type
+ *   event_payment_type     → payment-type
+ *   available_capacity     → spots-remaining
+ *   capacity_limit         → capacity-limit
+ *   event_visibility       → members-only (on for "Private ..." events)
+ *   event_location         → on-zoom (derived)
+ *   virtual_event_platform → on-zoom (derived)
+ *   webinar_url            → webinar-url    (cleared for members-only)
+ *   event_registration_url → event-link     (cleared for members-only)
+ *   recording_file_url     → recording-url  (cleared for members-only)
+ *   agenda_breakdown_to_be_displayed → agenda-displayed
  *
  * SPEAKERS:
- *   hs_object_id           â hubspot-id
- *   event_table_record     â name, name-of-person (full name)
- *   speaker_first_name     â (used in fallback name)
- *   speaker_last_name      â (used in fallback name)
- *   speaker_role__job_title â role
- *   speaker_bio            â desc
- *   speaker_profile_image  â image
+ *   hs_object_id           → hubspot-id
+ *   event_table_record     → name, name-of-person (full name)
+ *   speaker_first_name     → (used in fallback name)
+ *   speaker_last_name      → (used in fallback name)
+ *   speaker_role__job_title → role
+ *   speaker_bio            → desc
+ *   speaker_profile_image  → image
  *
  * SPONSORS:
- *   hs_object_id           â hubspot-id
- *   sponsor_name           â name
- *   sponsor_about_sponsor  â description
- *   sponsor_logo_image     â logo
- *   sponsor_website_url    â website
- *   sponsor_email          â email
- *   sponsor_instagram_url  â instagram-url
+ *   hs_object_id           → hubspot-id
+ *   sponsor_name           → name
+ *   sponsor_about_sponsor  → description
+ *   sponsor_logo_image     → logo
+ *   sponsor_website_url    → website
+ *   sponsor_email          → email
+ *   sponsor_instagram_url  → instagram-url
  *
  * AGENDAS:
- *   hs_id                  â hubspot-id
- *   session_title          â name, title
- *   session_description    â desc
- *   session_start_time     â time
- *   session_end_time       â end-time
- *   presenter_name         â presenter-name
- *   sort_order             â sort-order
- *   event_record_id        â event-record-id
+ *   hs_id                  → hubspot-id
+ *   session_title          → name, title
+ *   session_description    → desc
+ *   session_start_time     → time
+ *   session_end_time       → end-time
+ *   presenter_name         → presenter-name
+ *   sort_order             → sort-order
+ *   event_record_id        → event-record-id
  */
 
 // ---------- Helpers ----------
@@ -114,17 +114,93 @@ function buildLocation(event) {
 }
 
 /**
- * Build a duration string from start/end times.
+ * Classify HubSpot's event_visibility, e.g.
+ *   "Public (available to non-members)"    → 'public'
+ *   "Private (restricted to members only)" → 'private'
+ * Anything else (blank or a new option) → null, and the event is skipped.
+ */
+export function eventVisibility(event) {
+  const v = String(event.event_visibility || '').trim().toLowerCase();
+  if (v.startsWith('public')) return 'public';
+  if (v.startsWith('private')) return 'private';
+  return null;
+}
+
+export function isMembersOnly(event) {
+  return eventVisibility(event) === 'private';
+}
+
+// HubSpot sends US states as full names; abbreviations are accepted too.
+const US_STATE_TIME_ZONES = {
+  'America/New_York': [
+    'connecticut', 'ct', 'delaware', 'de', 'district of columbia', 'dc',
+    'florida', 'fl', 'georgia', 'ga', 'indiana', 'in', 'kentucky', 'ky',
+    'maine', 'me', 'maryland', 'md', 'massachusetts', 'ma', 'michigan', 'mi',
+    'new hampshire', 'nh', 'new jersey', 'nj', 'new york', 'ny',
+    'north carolina', 'nc', 'ohio', 'oh', 'pennsylvania', 'pa',
+    'rhode island', 'ri', 'south carolina', 'sc', 'vermont', 'vt',
+    'virginia', 'va', 'west virginia', 'wv',
+  ],
+  'America/Chicago': [
+    'alabama', 'al', 'arkansas', 'ar', 'illinois', 'il', 'iowa', 'ia',
+    'kansas', 'ks', 'louisiana', 'la', 'minnesota', 'mn', 'mississippi', 'ms',
+    'missouri', 'mo', 'nebraska', 'ne', 'north dakota', 'nd', 'oklahoma', 'ok',
+    'south dakota', 'sd', 'tennessee', 'tn', 'texas', 'tx', 'wisconsin', 'wi',
+  ],
+  'America/Denver': [
+    'colorado', 'co', 'idaho', 'id', 'montana', 'mt', 'new mexico', 'nm',
+    'utah', 'ut', 'wyoming', 'wy',
+  ],
+  'America/Phoenix': ['arizona', 'az'],
+  'America/Los_Angeles': [
+    'california', 'ca', 'nevada', 'nv', 'oregon', 'or', 'washington', 'wa',
+  ],
+  'America/Anchorage': ['alaska', 'ak'],
+  'Pacific/Honolulu': ['hawaii', 'hi'],
+};
+
+const AU_STATE_TIME_ZONES = {
+  nsw: 'Australia/Sydney',
+  act: 'Australia/Sydney',
+  vic: 'Australia/Melbourne',
+  tas: 'Australia/Hobart',
+  qld: 'Australia/Brisbane',
+  sa: 'Australia/Adelaide',
+  wa: 'Australia/Perth',
+  nt: 'Australia/Darwin',
+};
+
+/**
+ * Pick the time zone an event's times should be shown in, from its country
+ * and state. Online events with no state fall back to Eastern (US) or
+ * Sydney (AU).
+ */
+export function eventTimeZone(event) {
+  const country = String(event.country || '').trim().toLowerCase();
+  const state = String(event.event_state || '').trim().toLowerCase();
+
+  if (country === 'united states' || country === 'usa' || country === 'us') {
+    for (const [zone, states] of Object.entries(US_STATE_TIME_ZONES)) {
+      if (states.includes(state)) return zone;
+    }
+    return 'America/New_York';
+  }
+  return AU_STATE_TIME_ZONES[state] || 'Australia/Sydney';
+}
+
+/**
+ * Build a duration string from start/end times, in the event's local time.
  */
 function buildDuration(event) {
   if (!event.start_time || !event.end_time) return null;
+  const timeZone = eventTimeZone(event);
   const fmt = (iso) => {
     const d = new Date(iso);
     return d.toLocaleTimeString('en-AU', {
       hour: 'numeric',
       minute: '2-digit',
       hour12: true,
-      timeZone: 'Australia/Sydney',
+      timeZone,
     });
   };
   return `${fmt(event.start_time)} - ${fmt(event.end_time)}`;
@@ -257,11 +333,7 @@ export function mapEvent(hubspotEvent) {
     'capacity-limit': hubspotEvent.capacity_limit
       ? parseInt(hubspotEvent.capacity_limit, 10)
       : null,
-    'members-only': hubspotEvent.event_visibility
-      ?.toLowerCase()
-      .includes('non-members')
-      ? false
-      : true,
+    'members-only': isMembersOnly(hubspotEvent),
     'on-zoom': !!(
       hubspotEvent.virtual_event_platform ||
       hubspotEvent.webinar_url ||
@@ -300,7 +372,19 @@ export function mapEvent(hubspotEvent) {
     fieldData['recording-url'] = hubspotEvent.recording_file_url;
   }
 
-  return stripNulls(fieldData);
+  stripNulls(fieldData);
+
+  // Members-only events: everything in the CMS ends up in the public page
+  // source, even when the Designer hides it. Registration links can carry
+  // member discount codes, so send explicit nulls — this also clears any link
+  // left over from when an event was public. The site shows a Join Fresh CTA.
+  if (fieldData['members-only']) {
+    fieldData['event-link'] = null;
+    fieldData['webinar-url'] = null;
+    fieldData['recording-url'] = null;
+  }
+
+  return fieldData;
 }
 
 // ---------- Speaker mapper ----------
